@@ -4,6 +4,7 @@ import { CheckSquare, RefreshCw, Search, Square, X } from 'lucide-vue-next'
 import { api } from '../api'
 import type { Account } from '../types'
 import AccountDrawer from '../components/AccountDrawer.vue'
+import IntelligenceBadge from '../components/IntelligenceBadge.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const accounts = ref<Account[]>([])
@@ -95,16 +96,17 @@ onMounted(load)
     <table class="account-table">
       <thead><tr>
         <th class="check-cell"><button class="check-button" title="全选" @click="toggleAll"><CheckSquare v-if="allSelected" :size="17" /><Square v-else :size="17" /></button></th>
-        <th>账号</th><th>套餐</th><th>5h 使用</th><th>5h 重置</th><th>下次动作</th><th>自动化</th>
+        <th>账号</th><th>套餐</th><th>5h 使用</th><th>5h 重置</th><th>下次动作</th><th>智商</th><th>自动化</th>
       </tr></thead>
       <tbody>
-        <tr v-if="!loading && !filtered.length"><td colspan="7" class="empty-state">没有匹配的账号</td></tr>
+        <tr v-if="!loading && !filtered.length"><td colspan="8" class="empty-state">没有匹配的账号</td></tr>
         <tr v-for="account in filtered" :key="account.id" :class="{ selected: selected.has(account.id) }">
           <td class="check-cell"><button class="check-button" :title="selected.has(account.id) ? '取消选择' : '选择账号'" @click.stop="toggleOne(account.id)"><CheckSquare v-if="selected.has(account.id)" :size="17" /><Square v-else :size="17" /></button></td>
           <td><button class="account-link" @click="choose(account)"><strong>{{ account.name || account.email || `账号 ${account.remote_id}` }}</strong><span>{{ account.email || `sub2api #${account.remote_id}` }}</span></button></td>
           <td><span class="plan-label">{{ account.plan_type || '未知' }}</span><small v-if="!account.eligible">{{ account.eligibility_reason }}</small></td>
           <td><div class="usage-cell"><span>{{ percent(account.five_used_percent) }}</span><progress :value="account.five_used_percent ?? 0" max="100" /></div></td>
           <td>{{ when(account.five_reset_at) }}</td><td>{{ when(account.next_action_at) }}</td>
+          <td><IntelligenceBadge :status="account.last_answer_status" /></td>
           <td><StatusBadge :state="account.runtime_state" /></td>
         </tr>
       </tbody>

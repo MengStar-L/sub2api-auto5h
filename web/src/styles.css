@@ -79,7 +79,7 @@ label input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 2
 .form-error { padding: 8px 10px; border-radius: 4px; font-size: 13px; }
 
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
-.account-table { width: 100%; min-width: 940px; border-collapse: collapse; }
+.account-table { width: 100%; min-width: 1040px; border-collapse: collapse; }
 .account-table th { height: 42px; padding: 0 12px; color: var(--muted); background: var(--surface-alt); font-size: 12px; font-weight: 650; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .account-table td { height: 66px; padding: 8px 12px; border-bottom: 1px solid #ebedef; font-size: 13px; vertical-align: middle; }
 .account-table tr:last-child td { border-bottom: 0; }
@@ -134,6 +134,11 @@ progress::-moz-progress-bar { background: var(--blue); }
 .timeline li { display: grid; gap: 3px; padding: 9px 12px; border-bottom: 1px solid #eceef0; font-size: 12px; }
 .timeline li:last-child { border-bottom: 0; }
 .timeline li span { color: var(--muted); overflow-wrap: anywhere; }
+.assessment-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+.answer-text { max-height: 180px; margin: 10px 0 0; overflow: auto; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--surface-alt); font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.attempt-assessment { display: grid; justify-items: start; gap: 5px; margin-top: 5px; }
+.attempt-assessment .answer-text { width: 100%; margin: 0; }
+.muted-copy { margin: 0; color: var(--muted); font-size: 12px; }
 
 .auth-page, .setup-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #eef1f3; }
 .auth-panel, .setup-panel { width: min(100%, 420px); padding: 28px; border: 1px solid var(--line); border-radius: 6px; background: #fff; box-shadow: 0 12px 35px rgb(30 38 45 / 10%); }
@@ -191,7 +196,8 @@ progress::-moz-progress-bar { background: var(--blue); }
   .account-table td:nth-child(3) { grid-column: 3; grid-row: 1; text-align: right; }
   .account-table td:nth-child(4) { grid-column: 2; }
   .account-table td:nth-child(5), .account-table td:nth-child(6) { display: none; }
-  .account-table td:nth-child(7) { grid-column: 3; grid-row: 2; }
+  .account-table td:nth-child(7) { grid-column: 2; grid-row: 3; }
+  .account-table td:nth-child(8) { grid-column: 3; grid-row: 2; }
   .account-table tr:has(.empty-state) { display: block; }
   .plan-label { max-width: 120px; }
   .detail-strip { grid-template-columns: 1fr 1fr; }

@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Play, RefreshCw, Save, X } from 'lucide-vue-next'
 import { api } from '../api'
 import type { Account, Attempt, Cycle } from '../types'
+import IntelligenceBadge from './IntelligenceBadge.vue'
 import StatusBadge from './StatusBadge.vue'
 
 const props = defineProps<{ account: Account }>()
@@ -19,7 +20,7 @@ const form = reactive({
   max_retries_override: props.account.policy.max_retries_override ?? null as number | null,
   retry_base_override_seconds: props.account.policy.retry_base_override_seconds ?? null as number | null,
 })
-const canRun = computed(() => props.account.policy.enabled && ['due', 'retry_wait', 'attention', 'quota_retry', 'pending_check', 'failed', 'success_unverified'].includes(props.account.runtime_state))
+const canRun = computed(() => props.account.policy.enabled && ['due', 'retry_wait', 'attention', 'quota_retry', 'pending_check', 'failed'].includes(props.account.runtime_state))
 
 function when(value?: number) { return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value * 1000)) : '—' }
 function nullable(value: number | null) { return value === null || Number.isNaN(value) ? null : value }
@@ -52,7 +53,7 @@ async function refreshQuota() {
   finally { busy.value = false }
 }
 async function run() {
-  if (!window.confirm('确认执行额度预检？仅在窗口确实可启动时才会发送 hi。')) return
+  if (!window.confirm('确认执行额度预检？仅在窗口确实可启动时才会发送糖果题。')) return
   busy.value = true; error.value = ''
   try { await api(`/api/accounts/${props.account.id}/run`, { method: 'POST', body: '{}' }); await loadHistory(); emit('updated') }
   catch (reason) { error.value = reason instanceof Error ? reason.message : '执行失败' }
@@ -82,7 +83,15 @@ onMounted(() => Promise.all([loadHistory(), loadModels()]))
           <div class="action-row"><button class="primary command" :disabled="busy" @click="save"><Save :size="17" />保存</button><button class="secondary command" :disabled="busy" @click="refreshQuota"><RefreshCw :size="17" />刷新额度</button><button v-if="canRun" class="warning command" :disabled="busy" @click="run"><Play :size="17" />立即执行</button></div>
         </section>
         <section class="drawer-section"><h2>额度</h2><dl class="quota-list"><div><dt>5h 使用</dt><dd>{{ account.five_used_percent == null ? '未知' : `${Math.round(account.five_used_percent)}%` }}</dd></div><div><dt>5h 重置</dt><dd>{{ when(account.five_reset_at) }}</dd></div><div><dt>7d 使用</dt><dd>{{ account.seven_used_percent == null ? '未知' : `${Math.round(account.seven_used_percent)}%` }}</dd></div><div><dt>7d 重置</dt><dd>{{ when(account.seven_reset_at) }}</dd></div></dl></section>
-        <section class="drawer-section"><h2>周期与尝试</h2><div class="timeline"><article v-for="cycle in cycles" :key="cycle.id"><button @click="loadAttempts(cycle)"><span>{{ cycle.cycle_key }}</span><StatusBadge :state="cycle.status" /><small>{{ when(cycle.created_at) }} · {{ cycle.attempt_count }} 次尝试</small></button><ul v-if="attempts[cycle.id]"><li v-for="attempt in attempts[cycle.id]" :key="attempt.id"><strong>#{{ attempt.attempt_number }} {{ attempt.outcome }}</strong><span>{{ attempt.message || attempt.error_code || '—' }}</span></li></ul></article><p v-if="!cycles.length" class="empty-state">暂无周期记录</p></div></section>
+        <section class="drawer-section">
+          <h2>智商检测</h2>
+          <template v-if="account.last_answer_status">
+            <div class="assessment-row"><IntelligenceBadge :status="account.last_answer_status" /><span>{{ when(account.last_answer_at) }}</span></div>
+            <pre class="answer-text">{{ account.last_answer_text || '空回复' }}</pre>
+          </template>
+          <p v-else class="muted-copy">尚未进行检测</p>
+        </section>
+        <section class="drawer-section"><h2>周期与尝试</h2><div class="timeline"><article v-for="cycle in cycles" :key="cycle.id"><button @click="loadAttempts(cycle)"><span>{{ cycle.cycle_key }}</span><StatusBadge :state="cycle.status" /><small>{{ when(cycle.created_at) }} · {{ cycle.attempt_count }} 次尝试</small></button><ul v-if="attempts[cycle.id]"><li v-for="attempt in attempts[cycle.id]" :key="attempt.id"><strong>#{{ attempt.attempt_number }} {{ attempt.outcome }}</strong><span>{{ attempt.message || attempt.error_code || '—' }}</span><div v-if="attempt.answer_status" class="attempt-assessment"><IntelligenceBadge :status="attempt.answer_status" /><pre class="answer-text">{{ attempt.answer_text || '空回复' }}</pre></div></li></ul></article><p v-if="!cycles.length" class="empty-state">暂无周期记录</p></div></section>
       </div>
     </aside>
   </div>

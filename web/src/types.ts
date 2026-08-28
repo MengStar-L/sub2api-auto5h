@@ -32,6 +32,9 @@ export interface Account {
   next_action_at?: number
   runtime_state: string
   last_error?: string
+  last_answer_status: string
+  last_answer_text: string
+  last_answer_at?: number
   policy: Policy
 }
 
@@ -57,6 +60,8 @@ export interface Attempt {
   http_status?: number
   error_code: string
   message: string
+  answer_status: string
+  answer_text: string
 }
 
 export interface EventItem {
