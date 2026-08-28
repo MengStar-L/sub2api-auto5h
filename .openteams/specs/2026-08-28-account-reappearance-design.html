@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sub2api-auto5h 账号重新出现状态修复设计</title>
+  <style>
+    :root { color-scheme: light; --ink: #17212b; --muted: #596674; --line: #d7dee5; --blue: #0969a9; --blue-soft: #e9f4fb; --green: #26734d; --green-soft: #eaf6ef; --warn: #8a4b08; --warn-soft: #fff4df; --paper: #fff; --page: #f3f6f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(940px, calc(100% - 32px)); margin: 32px auto; padding: 38px 44px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgb(23 33 43 / 8%); }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+    h2 { margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 19px; letter-spacing: 0; }
+    p { margin: 9px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 5px 0; }
+    code { padding: 2px 5px; border-radius: 4px; background: #eef1f4; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+    th, td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f5f8fa; }
+    .lead { color: var(--muted); font-size: 17px; }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 22px 0; }
+    .fact { padding: 13px 14px; border: 1px solid var(--line); border-radius: 6px; background: #fafcfd; }
+    .fact strong { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; margin: 16px 0; }
+    .flow div { min-height: 88px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--blue-soft); }
+    .arrow { color: var(--blue); font-weight: 700; }
+    .note { padding: 12px 14px; border-left: 4px solid var(--green); background: var(--green-soft); }
+    .warning { padding: 12px 14px; border-left: 4px solid var(--warn); background: var(--warn-soft); color: #633705; }
+    @media (max-width: 700px) {
+      main { width: 100%; margin: 0; padding: 24px 18px; border: 0; border-radius: 0; }
+      .facts, .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); justify-self: center; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>账号重新出现状态修复</h1>
+  <p class="lead">修复账号已重新出现在 sub2api 列表中，但面板仍保留“已移除”运行状态的问题，同时保留用户已有的自动化策略。</p>
+
+  <div class="facts">
+    <div class="fact"><strong>问题位置</strong>库存 upsert 保留了旧的 <code>runtime_state=missing</code></div>
+    <div class="fact"><strong>恢复原则</strong>同一身份重新出现时保留启用策略</div>
+    <div class="fact"><strong>安全边界</strong>身份变化时仍强制关闭自动化</div>
+  </div>
+
+  <h2>已确认的原因</h2>
+  <p>sub2api 的筛选接口当前返回全部 8 个 OpenAI OAuth 账号。库存同步也会将匹配记录的 <code>missing</code> 字段恢复为 0，但对可调度账号沿用了同步前的 <code>runtime_state</code>。如果旧状态为 <code>missing</code>，面板状态徽标就会继续显示“已移除”。</p>
+  <p>不可调度账号没有暴露这个问题，因为既有分支会把它们直接改为 <code>paused</code>。这与现场截图中 3 个不可调度账号显示“已暂停”、5 个可调度账号显示“已移除”的组合完全一致。</p>
+
+  <h2>方案选择</h2>
+  <table>
+    <thead><tr><th>方案</th><th>处理</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>后端状态恢复</td><td>upsert 时识别“原来缺失、现在重新出现”，结合原策略恢复状态和预检计划。</td><td><strong>采用</strong>。同时修复显示和调度。</td></tr>
+      <tr><td>仅修正前端标签</td><td>根据 <code>missing</code> 字段覆盖徽标文字。</td><td>不采用。后台仍停留在错误状态。</td></tr>
+      <tr><td>所有重新出现账号立即检查</td><td>不区分策略是否启用，统一进入待检查。</td><td>不采用。未启用账号会显示误导状态。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>状态迁移</h2>
+  <table>
+    <thead><tr><th>重新出现时的条件</th><th>策略</th><th>目标状态</th><th>下一动作</th></tr></thead>
+    <tbody>
+      <tr><td>身份未变化，账号符合调度条件</td><td>已启用</td><td><code>pending_check</code></td><td>将 <code>next_action_at</code> 设为当前时间，立即执行只读 quota 预检。</td></tr>
+      <tr><td>身份未变化，账号符合调度条件</td><td>未启用</td><td><code>disabled</code></td><td>保持无下一动作，不访问 quota。</td></tr>
+      <tr><td>身份未变化，但账号不符合调度条件</td><td>任意</td><td><code>paused</code></td><td>清空下一动作，显示具体不可调度原因。</td></tr>
+      <tr><td>OpenAI 身份哈希发生变化</td><td>原来已启用</td><td><code>identity_changed</code></td><td>关闭策略、终止旧周期并要求管理员重新启用。</td></tr>
+    </tbody>
+  </table>
+  <p class="warning">账号重新出现不等于身份替换。只有远端 ID、创建时间和 OpenAI 身份仍匹配时才允许保留原策略；现有身份保护规则不放宽。</p>
+
+  <h2>数据流</h2>
+  <div class="flow">
+    <div><strong>1. 列表同步</strong><br>先将当前连接库存标记为缺失，再读取本次完整账号列表。</div>
+    <span class="arrow">→</span>
+    <div><strong>2. 匹配与恢复</strong><br>按连接、远端 ID 和创建时间匹配，识别旧记录是否处于缺失状态。</div>
+    <span class="arrow">→</span>
+    <div><strong>3. 策略感知</strong><br>已启用账号进入只读预检；未启用账号恢复为关闭；身份变化继续锁定。</div>
+  </div>
+  <p class="note">整个修复不增加远端写调用。重新出现且已启用的账号首先读取 quota，只有既有调度规则判定到期后才可能发送一次 <code>hi</code>。</p>
+
+  <h2>实现边界</h2>
+  <ul>
+    <li>只修改库存恢复逻辑及对应测试，不改 sub2api 客户端、页面接口或数据库结构。</li>
+    <li>状态恢复在同一个 SQLite 事务中完成，避免页面看到 <code>missing=0</code> 但运行状态仍为 <code>missing</code> 的中间状态。</li>
+    <li>使用现有 <code>account_policies.enabled</code> 判断是否安排预检，不创建新的配置项。</li>
+    <li>普通同步中的非缺失账号维持原状态和下一动作，防止每次同步都重置已有周期。</li>
+  </ul>
+
+  <h2>测试与验收</h2>
+  <ol>
+    <li>先同步一个符合条件且策略已启用的账号，再用空列表将其标记缺失，最后重新同步同一身份；断言策略仍启用、状态为 <code>pending_check</code>、下一动作已到期。</li>
+    <li>同样流程用于未启用账号；断言状态为 <code>disabled</code> 且没有下一动作。</li>
+    <li>重新出现的账号不可调度；断言状态为 <code>paused</code>，没有下一动作，并保留原因。</li>
+    <li>账号重新出现但身份哈希变化；断言策略被关闭、身份代次增加、旧周期被终止。</li>
+    <li>连续同步从未缺失的账号；断言现有运行状态和下一动作不被重置。</li>
+    <li>通过 Go 格式检查、单测、race 和现有 GitHub Actions 后发布补丁版本。</li>
+  </ol>
+</main>
+</body>
+</html>
