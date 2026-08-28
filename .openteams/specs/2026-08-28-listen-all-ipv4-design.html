@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>sub2api-auto5h 默认监听所有 IPv4 接口</title>
+  <style>
+    :root { color-scheme:light; --ink:#20242a; --muted:#65717e; --line:#d9dee5; --accent:#1769aa; --warn:#9a6200; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.7 system-ui,"Microsoft YaHei",sans-serif; color:var(--ink); background:#f5f7f9; }
+    main { max-width:900px; margin:0 auto; padding:48px 28px 80px; min-height:100vh; background:#fff; }
+    h1 { margin:0 0 8px; font-size:30px; }
+    h2 { margin:34px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:20px; }
+    p,li { max-width:82ch; }
+    .lead { color:var(--muted); font-size:17px; }
+    .facts { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:25px 0; }
+    .fact { padding:14px; border:1px solid var(--line); border-radius:7px; }
+    .fact strong { display:block; color:var(--accent); }
+    code { padding:2px 5px; border-radius:3px; background:#eef1f4; }
+    .warn { padding:10px 14px; border-left:3px solid var(--warn); background:#fff8e8; }
+    @media (max-width:700px) { main{padding:28px 18px 56px}.facts{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+<main>
+  <h1>默认监听所有 IPv4 接口</h1>
+  <p class="lead">移除回环地址限制，让宿主机上的 Docker 反向代理和其他受控网络直接访问管理面板后端。</p>
+
+  <div class="facts">
+    <div class="fact"><strong>默认地址</strong><code>0.0.0.0:2555</code></div>
+    <div class="fact"><strong>端口选择</strong><code>0.0.0.0:&lt;所选端口&gt;</code></div>
+    <div class="fact"><strong>协议范围</strong>IPv4，不新增 IPv6 默认监听</div>
+  </div>
+
+  <h2>行为</h2>
+  <ul>
+    <li>Go 在未设置 <code>SUB2API_AUTO5H_LISTEN</code> 时使用 <code>0.0.0.0:2555</code>。</li>
+    <li>安装器创建或重写环境文件时使用 <code>0.0.0.0:&lt;选择端口&gt;</code>。</li>
+    <li>升级读取现有环境文件中的端口，无论旧地址是 <code>127.0.0.1</code>、Docker 网桥 IP 还是 <code>0.0.0.0</code>，都保留端口并把地址规范化为 <code>0.0.0.0</code>。</li>
+    <li>用户仍可在环境文件中手工设置其他 Go <code>net.Listen</code> 可接受的地址；再次运行安装器时会按上述升级规则规范化。</li>
+  </ul>
+
+  <h2>改动范围</h2>
+  <ul>
+    <li><code>internal/config</code>：默认值与回归测试。</li>
+    <li><code>scripts/install.sh</code>：端口读取和环境文件生成。</li>
+    <li><code>scripts/lifecycle_test.sh</code>：新安装、旧回环配置和自定义网桥配置测试。</li>
+    <li><code>packaging/sub2api-auto5h.env.example</code>：发行示例。</li>
+    <li><code>README.md</code>：Docker/Nginx 访问方式及公网暴露警告。</li>
+  </ul>
+
+  <h2>安全边界</h2>
+  <p class="warn"><code>0.0.0.0</code> 会监听宿主机所有 IPv4 接口。如果云防火墙、安全组或本机防火墙允许所选端口，客户端可绕过 HTTPS 反向代理直接访问面板。部署者必须关闭公网端口，只允许 Docker/内网访问，或通过 HTTPS Nginx 统一入口访问。</p>
+  <ul>
+    <li>不自动修改 iptables、nftables、UFW、firewalld 或云厂商安全组。</li>
+    <li>不改变登录、CSRF、SameSite、主密钥或 API Key 加密机制。</li>
+    <li>启用 HTTPS 反向代理时仍需设置 <code>SUB2API_AUTO5H_COOKIE_SECURE=true</code>。</li>
+  </ul>
+
+  <h2>验收</h2>
+  <ul>
+    <li>新安装默认环境文件包含 <code>SUB2API_AUTO5H_LISTEN=0.0.0.0:2555</code>。</li>
+    <li>选择端口 3000 时生成 <code>0.0.0.0:3000</code>。</li>
+    <li>旧配置 <code>127.0.0.1:8090</code> 升级后生成 <code>0.0.0.0:8090</code>。</li>
+    <li>旧配置 <code>172.19.0.1:4321</code> 升级后生成 <code>0.0.0.0:4321</code>。</li>
+    <li>生命周期 shell 测试、Go 测试、race、Vue、生产 Playwright 和双架构 Release 全部通过。</li>
+  </ul>
+</main>
+</body>
+</html>
