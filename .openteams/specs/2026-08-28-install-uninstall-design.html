@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>sub2api-auto5h 安装与完全卸载设计</title>
+  <style>
+    :root { color-scheme:light; --ink:#20242a; --muted:#66717e; --line:#d9dee5; --accent:#1769aa; --safe:#197149; --warn:#9a6200; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.7 system-ui,"Microsoft YaHei",sans-serif; color:var(--ink); background:#f5f7f9; }
+    main { max-width:980px; margin:0 auto; padding:48px 28px 80px; min-height:100vh; background:#fff; }
+    h1 { margin:0 0 8px; font-size:31px; }
+    h2 { margin:36px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:20px; }
+    h3 { margin:23px 0 8px; font-size:16px; }
+    p,li { max-width:84ch; }
+    .lead { color:var(--muted); font-size:17px; }
+    .facts { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:26px 0; }
+    .fact { padding:14px; border:1px solid var(--line); border-radius:7px; }
+    .fact strong { display:block; color:var(--accent); }
+    code { padding:2px 5px; border-radius:3px; background:#eef1f4; }
+    pre { overflow:auto; padding:16px; border-radius:7px; color:#edf4fa; background:#17212b; }
+    pre code { padding:0; color:inherit; background:none; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { padding:9px 8px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-weight:600; }
+    .safe { padding:10px 14px; border-left:3px solid var(--safe); background:#edf8f2; }
+    .warn { padding:10px 14px; border-left:3px solid var(--warn); background:#fff8e8; }
+    @media (max-width:700px) { main{padding:28px 18px 56px}.facts{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+<main>
+  <h1>可配置安装与完全卸载</h1>
+  <p class="lead">让 sub2api-auto5h 的程序、配置、数据和备份集中在用户选择的安装根目录，同时保留 systemd 权限隔离、可升级性和安全的完整清理。</p>
+
+  <div class="facts">
+    <div class="fact"><strong>默认根目录</strong><code>/opt/sub2apiauto5h</code></div>
+    <div class="fact"><strong>默认监听</strong><code>127.0.0.1:2555</code></div>
+    <div class="fact"><strong>输入方式</strong>TTY 交互或环境变量</div>
+  </div>
+
+  <h2>目标与边界</h2>
+  <ul>
+    <li>新安装允许选择安装根目录和监听端口；直接回车或无 TTY 时使用默认值。</li>
+    <li>二进制、环境文件、SQLite、WAL/SHM 和升级备份均位于同一个安装根目录。</li>
+    <li>systemd unit 必须位于系统 unit 目录；专用系统用户和组属于系统级资源。这是单目录目标仅有的外部资源。</li>
+    <li>监听主机固定为 <code>127.0.0.1</code>，此变更不引入公网 HTTP 绑定选项。</li>
+    <li>提供可独立下载且随 Release 打包的完全卸载脚本。</li>
+  </ul>
+
+  <h2>目录布局与权限</h2>
+  <table>
+    <thead><tr><th>路径</th><th>所有者/权限</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt;root&gt;/sub2api-auto5h</code></td><td>root:root，0755</td><td>服务二进制</td></tr>
+      <tr><td><code>&lt;root&gt;/uninstall.sh</code></td><td>root:root，0755</td><td>与当前布局匹配的卸载器</td></tr>
+      <tr><td><code>&lt;root&gt;/config/sub2api-auto5h.env</code></td><td>root:sub2api-auto5h，0600</td><td>主密钥、监听地址、数据库路径与 Cookie 设置</td></tr>
+      <tr><td><code>&lt;root&gt;/data/</code></td><td>sub2api-auto5h:sub2api-auto5h，0700</td><td>SQLite、WAL 和 SHM</td></tr>
+      <tr><td><code>&lt;root&gt;/backups/</code></td><td>sub2api-auto5h:sub2api-auto5h，0700</td><td>升级前数据库归档</td></tr>
+      <tr><td><code>/etc/systemd/system/sub2api-auto5h.service</code></td><td>root:root，0644</td><td>根据实际根目录生成的 systemd unit</td></tr>
+    </tbody>
+  </table>
+  <p>unit 的 <code>ExecStart</code>、<code>EnvironmentFile</code> 与 <code>ReadWritePaths</code> 均使用已经验证的绝对安装路径。<code>ProtectSystem=strict</code> 保持启用，只允许服务写入 <code>data</code> 和 <code>backups</code>。</p>
+
+  <h2>安装输入与校验</h2>
+  <h3>交互模式</h3>
+  <p>当 <code>/dev/tty</code> 可读写且对应环境变量未设置时，安装器从 TTY 询问安装目录和端口，因此通过 <code>curl | sudo sh</code> 启动时仍可交互。每项直接回车采用默认值。</p>
+
+  <h3>非交互模式</h3>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/install.sh |
+  sudo SUB2API_AUTO5H_INSTALL_DIR=/srv/sub2apiauto5h \
+       SUB2API_AUTO5H_PORT=3000 sh</code></pre>
+  <p><code>SUB2API_AUTO5H_INSTALL_DIR</code> 和 <code>SUB2API_AUTO5H_PORT</code> 的存在会跳过对应提示。无 TTY 且未设置变量时使用 <code>/opt/sub2apiauto5h</code> 与 <code>2555</code>。</p>
+
+  <p class="safe">端口只接受十进制 1–65535。安装目录必须可规范化为安全的绝对路径；拒绝空值、控制字符、<code>..</code> 路径段、文件系统根以及 <code>/opt</code>、<code>/usr</code>、<code>/etc</code>、<code>/var</code>、<code>/bin</code>、<code>/sbin</code> 等宽泛系统目录。</p>
+
+  <h2>安装与升级流程</h2>
+  <ol>
+    <li>验证 root 权限、架构、安装参数及必需命令，再下载指定或最新 Release。</li>
+    <li>验证 <code>SHA256SUMS</code> 后解包；任何失败均不修改现有服务。</li>
+    <li>停止既有服务，确定当前布局，并在替换前备份数据库及 WAL/SHM。</li>
+    <li>创建根目录及子目录，原子替换二进制和卸载器，生成使用实际路径的 unit。</li>
+    <li>首次安装生成主密钥和环境文件；原地升级保留环境文件、主密钥和数据库。</li>
+    <li>执行 <code>systemctl daemon-reload</code>，启用并启动服务；打印实际目录、面板地址和 setup token 查询命令。</li>
+  </ol>
+
+  <h3>v0.1.0 旧布局迁移</h3>
+  <p>若发现旧 unit 使用 <code>/usr/local/bin/sub2api-auto5h</code>，并且目标根目录尚无配置或数据，安装器会把 <code>/etc/sub2api-auto5h/sub2api-auto5h.env</code> 和 <code>/var/lib/sub2api-auto5h</code> 中的数据库文件安全迁移到新布局，保留原主密钥，并重写监听地址与数据库路径。迁移成功、服务启动后才清理旧项目专属路径；迁移前先生成备份。</p>
+  <p class="warn">如果目标目录已有不同配置或数据库，安装器必须停止并报告冲突，不可静默覆盖或合并两个实例。</p>
+
+  <h2>完全卸载流程</h2>
+  <p>卸载器优先使用 <code>SUB2API_AUTO5H_INSTALL_DIR</code>，否则从已安装的 unit 中读取带明确标记的根目录。解析后的路径必须再次通过与安装器相同的安全校验。</p>
+  <ol>
+    <li>展示将删除的 systemd unit、精确安装根目录、数据库、配置、备份和专用账号。</li>
+    <li>默认要求输入完整确认词；自动化时仅接受 <code>SUB2API_AUTO5H_UNINSTALL_CONFIRM=yes</code>。</li>
+    <li>停止并禁用服务，删除 unit，执行 daemon-reload 和 reset-failed。</li>
+    <li>只对已解析、已验证且精确匹配的安装根目录执行递归删除。</li>
+    <li>删除项目专用的旧版二进制、配置和状态目录（存在时），再删除专用用户与组。</li>
+  </ol>
+  <p class="warn">完全卸载不可恢复，包含 SQLite、主密钥和所有本地备份。脚本不会保留数据库，也不会删除安装根目录之外的任意用户文件。</p>
+
+  <h2>代码、文档与发布变更</h2>
+  <ul>
+    <li><code>scripts/install.sh</code>：参数输入、路径/端口校验、动态 unit、单目录布局、旧版迁移和升级备份。</li>
+    <li><code>scripts/uninstall.sh</code>：交互确认、安装位置发现、安全删除和账号清理。</li>
+    <li><code>packaging/sub2api-auto5h.service</code> 与 env 示例：改为默认根目录和端口。</li>
+    <li><code>internal/config</code>：无环境变量时的监听和数据库默认值与新布局一致。</li>
+    <li><code>README.md</code>：交互/非交互安装、自定义路径/端口、升级迁移、完整卸载及新 SSH 隧道示例。</li>
+    <li>Release 归档加入 <code>uninstall.sh</code>；CI 对所有 shell 脚本执行 POSIX shell 语法检查。</li>
+  </ul>
+
+  <h2>验收标准</h2>
+  <ul>
+    <li>无输入安装落在 <code>/opt/sub2apiauto5h</code>，服务监听 <code>127.0.0.1:2555</code>。</li>
+    <li>TTY 输入与两个环境变量都能覆盖默认值；非法路径和端口在下载或删除前失败。</li>
+    <li>生成的 unit 只引用实际安装根目录，服务仅能写入该根目录的 data/backups。</li>
+    <li>原地升级保留主密钥和数据库；v0.1.0 旧布局迁移后无需重新 setup。</li>
+    <li>卸载未确认时不改变系统；确认后 unit、根目录、配置、数据库、备份和专用用户/组均不存在。</li>
+    <li>GitHub Actions 的 Go、Vue、race、Playwright、amd64/arm64 发布及 shell 语法检查全部通过。</li>
+  </ul>
+</main>
+</body>
+</html>
