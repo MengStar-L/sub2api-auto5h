@@ -352,7 +352,16 @@ func (s *Scheduler) ProcessAccount(ctx context.Context, id string) error {
 	}
 	if errors.Is(cycleErr, store.ErrNotFound) {
 		key := fmt.Sprintf("bootstrap:%d", account.Policy.EnableGeneration)
-		cycle, err = s.store.EnsureCycle(ctx, id, account.IdentityGeneration, key, "bootstrap", nil, now.Unix())
+		kind := "bootstrap"
+		if account.RuntimeState == "success_unverified" {
+			fallbackAt := now.Unix()
+			if account.NextActionAt != nil {
+				fallbackAt = *account.NextActionAt
+			}
+			key = fmt.Sprintf("fallback:%d", fallbackAt)
+			kind = "fallback"
+		}
+		cycle, err = s.store.EnsureCycle(ctx, id, account.IdentityGeneration, key, kind, nil, now.Unix())
 		if err != nil {
 			return err
 		}
@@ -430,12 +439,15 @@ func (s *Scheduler) sendAttempt(ctx context.Context, client Remote, account stor
 		next := ended + sub2api.FiveHoursSeconds + int64(effectiveGrace(account.Policy, settings))
 		accepted := ended
 		status := result.HTTPStatus
+		assessment := answerStatus(result.Reply)
 		if err := s.store.FinishAttempt(ctx, claimed, now, ended, store.AttemptResult{
-			Outcome: "accepted", HTTPStatus: &status, Status: "success", NextAt: &next, AcceptedAt: &accepted, Reason: "test_complete success",
+			Outcome: "accepted", HTTPStatus: &status, Status: "success_unverified", NextAt: &next, AcceptedAt: &accepted,
+			Reason: "test_complete success", AnswerStatus: assessment, AnswerText: result.Reply,
 		}); err != nil {
 			return err
 		}
-		_ = s.store.AddEvent(ctx, "info", "scheduler", "activation_accepted", account.ID, "激活请求已明确成功，等待额度验证", "{}")
+		assessmentText := map[bool]string{true: "智商检测正常", false: "智商检测不正常"}[assessment == "normal"]
+		_ = s.store.AddEvent(ctx, "info", "scheduler", "activation_accepted", account.ID, "激活请求已明确成功，"+assessmentText+"，等待额度验证", "{}")
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
@@ -491,6 +503,13 @@ func (s *Scheduler) sendAttempt(ctx context.Context, client Remote, account stor
 		Outcome: "failed", HTTPStatus: statusCode, ErrorCode: errorCode, Message: message,
 		Status: "attention", Reason: "已达到最大尝试次数",
 	})
+}
+
+func answerStatus(reply string) string {
+	if strings.TrimSpace(reply) == "21" {
+		return "normal"
+	}
+	return "abnormal"
 }
 
 func errorDetails(err error, result sub2api.TestResult) (*int, string, string) {
@@ -615,9 +634,13 @@ func (s *Scheduler) RefreshQuota(ctx context.Context, accountID string) error {
 	state := account.RuntimeState
 	now := s.clock.Now()
 	if account.Policy.Enabled && quota.KnownIdle(now) {
-		value := now.Unix()
-		next = &value
-		state = "due"
+		if account.RuntimeState != "success_unverified" || account.NextActionAt == nil || *account.NextActionAt <= now.Unix() {
+			value := now.Unix()
+			next = &value
+			if account.RuntimeState != "success_unverified" {
+				state = "due"
+			}
+		}
 	} else if account.Policy.Enabled && quota.FiveActive(now) {
 		value := quota.FiveHour.ResetAt + int64(effectiveGrace(account.Policy, settings))
 		next = &value

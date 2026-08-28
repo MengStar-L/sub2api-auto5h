@@ -165,7 +165,7 @@ func (s *Server) runAccount(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	allowed := map[string]bool{"due": true, "retry_wait": true, "attention": true, "quota_retry": true, "pending_check": true, "failed": true, "success_unverified": true}
+	allowed := map[string]bool{"due": true, "retry_wait": true, "attention": true, "quota_retry": true, "pending_check": true, "failed": true}
 	if !account.Policy.Enabled || !allowed[account.RuntimeState] {
 		writeError(w, 409, "MANUAL_RUN_NOT_ALLOWED", "当前状态只允许只读检查，不能发起激活")
 		return

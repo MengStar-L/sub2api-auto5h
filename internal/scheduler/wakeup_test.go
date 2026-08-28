@@ -20,6 +20,16 @@ type scriptedRemote struct {
 	testCalls  int
 }
 
+type fixedClock struct {
+	now time.Time
+}
+
+func (clock fixedClock) Now() time.Time { return clock.now }
+
+func (fixedClock) After(time.Duration) <-chan time.Time {
+	return make(chan time.Time)
+}
+
 func (*scriptedRemote) Accounts(context.Context) ([]sub2api.Account, error) {
 	return []sub2api.Account{}, nil
 }
@@ -160,5 +170,102 @@ func TestZeroUsageResetAdvanceDoesNotInferSuccess(t *testing.T) {
 	}
 	if cycles[0].Status != "retry_wait" {
 		t.Fatalf("cycle status=%q reason=%q", cycles[0].Status, cycles[0].Reason)
+	}
+}
+
+func TestSuccessfulPuzzleRepliesDoNotChangeActivationSuccess(t *testing.T) {
+	tests := []struct {
+		name       string
+		reply      string
+		assessment string
+	}{
+		{name: "normal", reply: " 21\n", assessment: "normal"},
+		{name: "wrong number", reply: "29", assessment: "abnormal"},
+		{name: "empty reply", reply: "", assessment: "abnormal"},
+		{name: "explanation", reply: "答案是21", assessment: "abnormal"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, account := schedulerTestStore(t)
+			now := time.Now().UTC().Truncate(time.Second)
+			remote := &scriptedRemote{
+				quota:      testQuota(now, 0),
+				testResult: sub2api.TestResult{HTTPStatus: 200, Success: true, Reply: test.reply},
+			}
+			automation := schedulerWithRemote(data, remote)
+			t.Cleanup(automation.Stop)
+
+			if err := automation.ProcessAccount(context.Background(), account.ID); err != nil {
+				t.Fatal(err)
+			}
+			if calls := remote.testCallCount(); calls != 1 {
+				t.Fatalf("test calls=%d", calls)
+			}
+			cycles, err := data.ListCycles(context.Background(), account.ID, 10)
+			if err != nil || len(cycles) != 1 {
+				t.Fatalf("cycles=%#v err=%v", cycles, err)
+			}
+			if cycles[0].Status != "success_unverified" || cycles[0].AttemptCount != 1 {
+				t.Fatalf("cycle=%#v", cycles[0])
+			}
+			attempts, err := data.ListAttempts(context.Background(), cycles[0].ID)
+			if err != nil || len(attempts) != 1 {
+				t.Fatalf("attempts=%#v err=%v", attempts, err)
+			}
+			if attempts[0].Outcome != "accepted" || attempts[0].AnswerStatus != test.assessment || attempts[0].AnswerText != test.reply {
+				t.Fatalf("attempt=%#v", attempts[0])
+			}
+			updated, err := data.GetAccount(context.Background(), account.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated.RuntimeState != "success_unverified" || updated.LastAnswerStatus != test.assessment || updated.LastAnswerText != test.reply || updated.LastError != "" {
+				t.Fatalf("account=%#v", updated)
+			}
+		})
+	}
+}
+
+func TestSuccessUnverifiedCreatesFallbackCycleAtNextDueTime(t *testing.T) {
+	data, account := schedulerTestStore(t)
+	firstNow := time.Now().UTC().Truncate(time.Second)
+	firstRemote := &scriptedRemote{
+		quota:      testQuota(firstNow, 0),
+		testResult: sub2api.TestResult{HTTPStatus: 200, Success: true, Reply: "21"},
+	}
+	first := schedulerWithRemote(data, firstRemote)
+	if err := first.ProcessAccount(context.Background(), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	first.Stop()
+
+	accepted, err := data.GetAccount(context.Background(), account.ID)
+	if err != nil || accepted.NextActionAt == nil || accepted.RuntimeState != "success_unverified" {
+		t.Fatalf("accepted=%#v err=%v", accepted, err)
+	}
+	secondNow := time.Unix(*accepted.NextActionAt, 0)
+	secondRemote := &scriptedRemote{
+		quota:      testQuota(secondNow, 0),
+		testResult: sub2api.TestResult{HTTPStatus: 200, Success: true, Reply: "29"},
+	}
+	second := schedulerWithRemote(data, secondRemote)
+	second.clock = fixedClock{now: secondNow}
+	t.Cleanup(second.Stop)
+	if err := second.ProcessAccount(context.Background(), account.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cycles, err := data.ListCycles(context.Background(), account.ID, 10)
+	if err != nil || len(cycles) != 2 {
+		t.Fatalf("cycles=%#v err=%v", cycles, err)
+	}
+	foundFallback := false
+	for _, cycle := range cycles {
+		if cycle.Kind == "fallback" && cycle.Status == "success_unverified" {
+			foundFallback = true
+		}
+	}
+	if !foundFallback || secondRemote.testCallCount() != 1 {
+		t.Fatalf("fallback=%v calls=%d cycles=%#v", foundFallback, secondRemote.testCallCount(), cycles)
 	}
 }
