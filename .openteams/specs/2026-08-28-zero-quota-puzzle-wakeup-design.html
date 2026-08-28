@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sub2api-auto5h 零用量唤醒与糖果题检测设计</title>
+  <style>
+    :root { color-scheme: light; --ink: #17212b; --muted: #596674; --line: #d7dee5; --blue: #0969a9; --blue-soft: #e9f4fb; --green: #26734d; --green-soft: #eaf6ef; --red: #b42318; --red-soft: #fff0ee; --warn: #8a4b08; --warn-soft: #fff4df; --paper: #fff; --page: #f3f6f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(980px, calc(100% - 32px)); margin: 32px auto; padding: 38px 44px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgb(23 33 43 / 8%); }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 19px; }
+    h3 { margin: 20px 0 8px; font-size: 16px; }
+    p { margin: 9px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 5px 0; }
+    code { padding: 2px 5px; border-radius: 4px; background: #eef1f4; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    pre { overflow-x: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: #f7f9fb; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+    th, td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f5f8fa; }
+    a { color: var(--blue); }
+    .lead { color: var(--muted); font-size: 17px; }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 22px 0; }
+    .fact { padding: 13px 14px; border: 1px solid var(--line); border-radius: 6px; background: #fafcfd; }
+    .fact strong { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; margin: 16px 0; }
+    .flow div { min-height: 100px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--blue-soft); }
+    .arrow { color: var(--blue); font-weight: 700; }
+    .note { padding: 12px 14px; border-left: 4px solid var(--green); background: var(--green-soft); }
+    .warning { padding: 12px 14px; border-left: 4px solid var(--warn); background: var(--warn-soft); color: #633705; }
+    .danger { padding: 12px 14px; border-left: 4px solid var(--red); background: var(--red-soft); color: #7a1d15; }
+    @media (max-width: 700px) {
+      main { width: 100%; margin: 0; padding: 24px 18px; border: 0; border-radius: 0; }
+      .facts, .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); justify-self: center; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>零用量唤醒与糖果题检测</h1>
+  <p class="lead">修正 <code>0% + 未来 reset_at</code> 被误判为已启动窗口的问题，并用固定糖果题替代 <code>hi</code>，在激活账号的同时记录一次独立的答案检测结果。</p>
+
+  <div class="facts">
+    <div class="fact"><strong>空闲判据</strong>5h 用量严格等于 0%，且允许请求、7d 未耗尽</div>
+    <div class="fact"><strong>激活成功判据</strong>SSE 终态 <code>test_complete + success=true</code></div>
+    <div class="fact"><strong>答题正常判据</strong>去除首尾空白后的完整回复严格等于 <code>21</code></div>
+  </div>
+
+  <h2>已确认的问题</h2>
+  <p>OpenAI usage 返回的 5h 窗口可能同时包含 <code>used_percent=0</code> 和未来 <code>reset_at</code>。sub2api 只转发 usage 数据，并在管理面板中明确将 OpenAI OAuth 的 0% 用量显示为“现在”。因此，未来时间本身不能证明窗口已经启动。</p>
+  <p>当前 auto5h 的 <code>FiveActive</code> 只检查 <code>reset_at &gt; now</code>，会把查询产生的“当前时间 + 5h”误当成活动窗口；同一个错误还存在于外部激活识别、失败请求后的成功推断和成功请求后的额度验证中。</p>
+  <p class="danger">只比较 reset 时间会产生假阳性：请求没有真正激活，程序却可能记录为外部已激活、推断成功或验证成功。所有这些位置必须同时使用 5h 用量。</p>
+
+  <h2>参考实现结论</h2>
+  <p><a href="https://github.com/jlcodes99/cockpit-tools/blob/main/src-tauri/src/modules/codex_local_access_foundation.rs">cockpit-tools 的官方直连唤醒</a>会向 Responses 流式接口发送真实问题，默认提示词为 <code>hi</code>，并要求得到可读回复；其<a href="https://github.com/jlcodes99/cockpit-tools/blob/main/src-tauri/src/modules/codex_wakeup_scheduler.rs">额度重置调度器</a>每 30 秒检查已保存的重置时间。</p>
+  <p>该项目当前没有在唤醒成功后比较 quota，并存在<a href="https://github.com/jlcodes99/cockpit-tools/issues/1377">“任务显示成功但未开启 5h 窗口”</a>的记录。本项目借鉴“发送真实问题并读取回复”，但继续采用更严格的 SSE 终态和后置 quota 验证，不把可读回复单独当作额度已验证的证据。</p>
+
+  <h2>方案选择</h2>
+  <table>
+    <thead><tr><th>方案</th><th>处理</th><th>结论</th></tr></thead>
+    <tbody>
+      <tr><td>固定题目与答案</td><td>题目和期望值写入后端；保存独立的答题状态与精简回复。</td><td><strong>采用</strong>。行为一致，不能被误配置。</td></tr>
+      <tr><td>设置页自由配置题目</td><td>管理员配置 prompt、期望答案和解析规则。</td><td>暂不采用。增加设置、校验和兼容复杂度。</td></tr>
+      <tr><td>仅写审计事件</td><td>答题结果只进入事件 metadata。</td><td>不采用。账号页和尝试详情不便查看。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>额度状态规则</h2>
+  <table>
+    <thead><tr><th>额度状态</th><th>判断</th><th>动作</th></tr></thead>
+    <tbody>
+      <tr><td>7d 已耗尽</td><td>7d <code>used_percent &gt;= 100</code> 且 reset 在未来</td><td>等待 7d reset 后重新预检。</td></tr>
+      <tr><td>5h 活动</td><td>5h <code>used_percent &gt; 0</code> 且 reset 在未来</td><td>等待 reset + 延迟；如 reset 与当前周期来源不同，可记为外部已激活。</td></tr>
+      <tr><td>5h 空闲</td><td>5h <code>used_percent == 0</code>、<code>allowed=true</code>、<code>limit_reached=false</code>，且 7d 可用</td><td>忽略未来 reset，立即进入本周期激活。</td></tr>
+      <tr><td>无 5h 窗口</td><td>quota 结构有效，允许请求且 7d 可用</td><td>沿用首次激活规则，立即执行。</td></tr>
+      <tr><td>不一致或禁止</td><td>0% 但不允许请求、limit reached、未知结构或坏字段</td><td>进入需要处理，永不 fail-open。</td></tr>
+    </tbody>
+  </table>
+  <p class="warning">上游可能把极小用量四舍五入为 0%。已确认采用成功优先策略：空闲判定周期最多补发一次题目。周期租约和终态成功去重仍保证调度器不会并发重复发送。</p>
+
+  <h2>固定提示词</h2>
+  <pre>在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）
+
+苹果味 桃子味 西瓜味
+圆形 7 9 8
+五角星形 7 6 4
+
+只能返回一个阿拉伯数字，不要解释，不要添加标点或其他内容。</pre>
+  <p>请求仍通过 sub2api 的定向账号测试接口发送，模式保持 <code>default</code>，模型继续使用全局或账号覆盖配置。sidecar 不读取或保存 OAuth 凭据。</p>
+
+  <h2>SSE 与双重结果</h2>
+  <div class="flow">
+    <div><strong>1. 收集回复</strong><br>按顺序拼接所有 <code>content.text</code>，最多保留 2000 个 Unicode 字符，不保存原始 SSE。</div>
+    <span class="arrow">→</span>
+    <div><strong>2. 确认激活请求</strong><br>只有 <code>test_complete</code> 且 <code>success=true</code> 才接受本次请求。</div>
+    <span class="arrow">→</span>
+    <div><strong>3. 判定答案</strong><br><code>TrimSpace(reply) == "21"</code> 为正常；其他回复均为不正常。</div>
+  </div>
+  <table>
+    <thead><tr><th>场景</th><th>激活结果</th><th>答题结果</th><th>是否重试</th></tr></thead>
+    <tbody>
+      <tr><td>终态成功，回复 <code>21</code></td><td>成功，等待 quota 验证</td><td>智商正常</td><td>否</td></tr>
+      <tr><td>终态成功，回复其他数字或文本</td><td>成功，等待 quota 验证</td><td>智商不正常，保存回复</td><td>否</td></tr>
+      <tr><td>终态成功但没有回复</td><td>成功，等待 quota 验证</td><td>智商不正常，显示“空回复”</td><td>否</td></tr>
+      <tr><td>HTTP/SSE 错误或没有成功终态</td><td>未确认</td><td>不产生新答题结果</td><td>沿用原重试与协调规则</td></tr>
+    </tbody>
+  </table>
+  <p class="note">“激活是否成功”和“答案是否正常”是两个正交状态。错误答案不会写入 <code>last_error</code>、不会暂停账号，也不会触发同周期重试。</p>
+
+  <h2>后置额度协调</h2>
+  <ul>
+    <li>显式 SSE 成功后仍在 10、30、60 秒读取 quota。</li>
+    <li>只有 5h <code>used_percent &gt; 0</code> 且未来 reset 合理时，才标记 <code>verified</code> 并创建下一 reset 周期。</li>
+    <li>如果 quota 保持 0%，周期维持 <code>success_unverified</code>，下一动作按请求接受时间 + 5h + 延迟推算，到期前仍重新预检。</li>
+    <li>请求错误或超时后的协调也必须看到 <code>used_percent &gt; 0</code>，才允许标记 <code>inferred_success</code>；单独的 reset 前移不再足够。</li>
+    <li>一旦 SSE 明确成功，无论答题结果或验证结果如何，本周期都不重发。</li>
+  </ul>
+
+  <h2>数据库与 API</h2>
+  <p>新增顺序迁移，不修改既有迁移文件。迁移在事务中完成并为旧数据提供空字符串默认值。</p>
+  <table>
+    <thead><tr><th>位置</th><th>字段</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>attempts</code></td><td><code>answer_status</code>、<code>answer_text</code></td><td>保存每次明确成功请求的答题判定和精简回复。</td></tr>
+      <tr><td><code>remote_accounts</code></td><td><code>last_answer_status</code>、<code>last_answer_text</code>、<code>last_answer_at</code></td><td>账号列表和抽屉快速显示最近一次结果。</td></tr>
+    </tbody>
+  </table>
+  <p><code>answer_status</code> 仅使用 <code>normal</code>、<code>abnormal</code> 或空值。明确成功时，尝试记录和账号最近结果在同一个 SQLite 事务中更新；失败尝试不会清除上一次结果。</p>
+
+  <h2>管理面板</h2>
+  <ul>
+    <li>账号表新增“智商”列：正常为绿色，不正常为红色，未测试为灰色。</li>
+    <li>账号抽屉展示最近检测时间、状态和模型原始回复；空回复使用明确占位文案。</li>
+    <li>周期下的尝试记录展示该次答题状态与回复，以便审计历史结果。</li>
+    <li>移动端允许表格横向滚动，抽屉内容自动换行，长回复不能造成页面溢出。</li>
+  </ul>
+
+  <h2>测试与验收</h2>
+  <ol>
+    <li>0% + 未来 5h reset 被判定为空闲并立即执行；刷新 quota 后不再显示“等待刷新”。</li>
+    <li>大于 0% + 未来 reset 继续等待；新的活动窗口才能记为外部已激活。</li>
+    <li>失败请求后的 quota 仍为 0% 且 reset 前移，不得推断成功。</li>
+    <li>显式成功后的 quota 仍为 0%，保持 <code>success_unverified</code> 且不重发；大于 0% 时才验证成功。</li>
+    <li>测试请求体包含完整固定题目、只返回数字的约束、配置模型和 <code>mode=default</code>。</li>
+    <li>SSE 分片回复拼接为 <code>21</code> 时标记正常；其他数字、说明文字和空回复均标记不正常，但激活成功且不重试。</li>
+    <li>缺少成功终态、错误事件、超时和超限响应仍按原安全策略处理，不写入新的答题结果。</li>
+    <li>SQLite 从旧数据库自动迁移，历史数据保持可读；账号列表、抽屉和尝试 API 返回新增字段。</li>
+    <li>前端在 1440×900 和 390×844 下展示状态及回复，无溢出、遮挡或错误的 SPA 回退。</li>
+    <li>只在 GitHub Actions 执行 Go/Vue 编译、单测、race 和 Playwright；全部通过后发布新的补丁版本。</li>
+  </ol>
+</main>
+</body>
+</html>
