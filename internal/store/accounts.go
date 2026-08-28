@@ -104,7 +104,7 @@ func (s *Store) ReplaceInventory(ctx context.Context, connectionUUID string, inp
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET missing=1, next_action_at=NULL, runtime_state='missing', updated_at=? WHERE connection_uuid=?`, now, connectionUUID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET missing=1 WHERE connection_uuid=?`, connectionUUID); err != nil {
 		return err
 	}
 	for _, input := range inputs {
@@ -163,6 +163,29 @@ func (s *Store) ReplaceInventory(ctx context.Context, connectionUUID string, inp
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO account_policies (account_id, enabled, enable_generation, updated_at) VALUES (?, 0, 0, ?)`, id, now); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
+      SET runtime_state='pending_check', next_action_at=?, last_error='', updated_at=?
+      WHERE connection_uuid=? AND missing=0 AND eligible=1 AND runtime_state='missing'
+        AND EXISTS (
+          SELECT 1 FROM account_policies p
+          WHERE p.account_id=remote_accounts.id AND p.enabled=1
+        )`, now, now, connectionUUID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
+      SET runtime_state='disabled', next_action_at=NULL, last_error='', updated_at=?
+      WHERE connection_uuid=? AND missing=0 AND eligible=1 AND runtime_state='missing'
+        AND NOT EXISTS (
+          SELECT 1 FROM account_policies p
+          WHERE p.account_id=remote_accounts.id AND p.enabled=1
+        )`, now, connectionUUID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
+      SET next_action_at=NULL, runtime_state='missing', updated_at=?
+      WHERE connection_uuid=? AND missing=1`, now, connectionUUID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

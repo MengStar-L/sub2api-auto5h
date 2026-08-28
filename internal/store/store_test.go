@@ -111,3 +111,153 @@ func TestUniqueCycleAndPolicyGeneration(t *testing.T) {
 		t.Fatal("duplicate cycle was created")
 	}
 }
+
+func eligibleInventoryAccount() RemoteAccountInput {
+	return RemoteAccountInput{
+		RemoteID:        7,
+		RemoteCreatedAt: "2026-08-27T00:00:00Z",
+		IdentityHash:    "identity-a",
+		Name:            "plus-account",
+		Platform:        "openai",
+		AccountType:     "oauth",
+		Status:          "active",
+		Schedulable:     true,
+		Eligible:        true,
+	}
+}
+
+func insertInventoryAccount(t *testing.T, data *Store, input RemoteAccountInput) Account {
+	t.Helper()
+	ctx := context.Background()
+	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := data.ListAccounts(ctx)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts=%d err=%v", len(accounts), err)
+	}
+	return accounts[0]
+}
+
+func markInventoryAccountMissing(t *testing.T, data *Store, id string) {
+	t.Helper()
+	if err := data.ReplaceInventory(context.Background(), "conn", []RemoteAccountInput{}); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := data.GetAccount(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !missing.Missing || missing.RuntimeState != "missing" || missing.NextActionAt != nil {
+		t.Fatalf("missing account=%#v", missing)
+	}
+}
+
+func TestReplaceInventoryRestoresEnabledAccountAfterReappearance(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	input := eligibleInventoryAccount()
+	account := insertInventoryAccount(t, data, input)
+	if err := data.SetPolicy(ctx, account.ID, Policy{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	markInventoryAccountMissing(t, data, account.ID)
+
+	before := time.Now().Unix()
+	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Missing || !restored.Policy.Enabled || restored.RuntimeState != "pending_check" || restored.NextActionAt == nil || *restored.NextActionAt < before {
+		t.Fatalf("restored account=%#v", restored)
+	}
+}
+
+func TestReplaceInventoryRestoresDisabledAccountAfterReappearance(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	input := eligibleInventoryAccount()
+	account := insertInventoryAccount(t, data, input)
+	markInventoryAccountMissing(t, data, account.ID)
+
+	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Missing || restored.Policy.Enabled || restored.RuntimeState != "disabled" || restored.NextActionAt != nil {
+		t.Fatalf("restored account=%#v", restored)
+	}
+}
+
+func TestReplaceInventoryKeepsReappearingIneligibleAccountPaused(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	input := eligibleInventoryAccount()
+	account := insertInventoryAccount(t, data, input)
+	markInventoryAccountMissing(t, data, account.ID)
+	input.Eligible = false
+	input.Schedulable = false
+	input.EligibilityReason = "sub2api 已关闭账号调度"
+
+	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Missing || restored.RuntimeState != "paused" || restored.NextActionAt != nil || restored.EligibilityReason != input.EligibilityReason {
+		t.Fatalf("restored account=%#v", restored)
+	}
+}
+
+func TestReplaceInventoryStillDisablesChangedIdentityAfterReappearance(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	input := eligibleInventoryAccount()
+	account := insertInventoryAccount(t, data, input)
+	if err := data.SetPolicy(ctx, account.ID, Policy{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	markInventoryAccountMissing(t, data, account.ID)
+	input.IdentityHash = "identity-b"
+
+	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Missing || restored.Policy.Enabled || restored.RuntimeState != "identity_changed" || restored.IdentityGeneration != 2 || restored.NextActionAt != nil {
+		t.Fatalf("restored account=%#v", restored)
+	}
+}
+
+func TestReplaceInventoryPreservesContinuouslyPresentAccountState(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	input := eligibleInventoryAccount()
+	account := insertInventoryAccount(t, data, input)
+	next := time.Now().Add(time.Hour).Unix()
+	if err := data.SetAccountRuntime(ctx, account.ID, "waiting", "", &next); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Missing || unchanged.RuntimeState != "waiting" || unchanged.NextActionAt == nil || *unchanged.NextActionAt != next {
+		t.Fatalf("unchanged account=%#v", unchanged)
+	}
+}
