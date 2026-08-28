@@ -184,11 +184,11 @@ func (s *Store) CompleteSetup(ctx context.Context, tokenHash, username, password
 	if _, err := tx.ExecContext(ctx, `INSERT INTO settings (
         id, connection_uuid, base_url, api_key_cipher, global_model, sync_interval_seconds,
         reset_grace_seconds, max_retries, retry_base_seconds, request_timeout_seconds,
-        max_concurrency, allow_private_http, updated_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        max_concurrency, allow_private_http, direct_wakeup_enabled, updated_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		settings.ConnectionUUID, settings.BaseURL, ciphertext, settings.GlobalModel, settings.SyncIntervalSeconds,
 		settings.ResetGraceSeconds, settings.MaxRetries, settings.RetryBaseSeconds, settings.RequestTimeoutSeconds,
-		settings.MaxConcurrency, settings.AllowPrivateHTTP, now); err != nil {
+		settings.MaxConcurrency, settings.AllowPrivateHTTP, settings.DirectWakeupEnabled, now); err != nil {
 		return fmt.Errorf("save settings: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE app_meta SET setup_complete = 1, setup_token_hash = NULL, setup_token_expires_at = NULL, updated_at = ? WHERE id = 1`, now); err != nil {
@@ -225,14 +225,14 @@ func (s *Store) UpdateAdminPassword(ctx context.Context, passwordHash, keepSessi
 func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
 	var out Settings
 	var encrypted string
-	var allowPrivate bool
+	var allowPrivate, directWakeup bool
 	var updated int64
 	err := s.db.QueryRowContext(ctx, `SELECT connection_uuid, base_url, api_key_cipher, global_model,
       sync_interval_seconds, reset_grace_seconds, max_retries, retry_base_seconds,
-      request_timeout_seconds, max_concurrency, allow_private_http, updated_at FROM settings WHERE id = 1`).Scan(
+      request_timeout_seconds, max_concurrency, allow_private_http, direct_wakeup_enabled, updated_at FROM settings WHERE id = 1`).Scan(
 		&out.ConnectionUUID, &out.BaseURL, &encrypted, &out.GlobalModel, &out.SyncIntervalSeconds,
 		&out.ResetGraceSeconds, &out.MaxRetries, &out.RetryBaseSeconds, &out.RequestTimeoutSeconds,
-		&out.MaxConcurrency, &allowPrivate, &updated)
+		&out.MaxConcurrency, &allowPrivate, &directWakeup, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Settings{}, ErrNotFound
 	}
@@ -240,6 +240,7 @@ func (s *Store) GetSettings(ctx context.Context) (Settings, error) {
 		return Settings{}, err
 	}
 	out.AllowPrivateHTTP = allowPrivate
+	out.DirectWakeupEnabled = directWakeup
 	out.UpdatedAt = time.Unix(updated, 0).UTC()
 	if s.box == nil {
 		return Settings{}, ErrSecretsLocked
@@ -275,9 +276,9 @@ func (s *Store) UpdateSettings(ctx context.Context, next Settings, replaceAPIKey
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE settings SET connection_uuid=?, base_url=?, api_key_cipher=?, global_model=?,
       sync_interval_seconds=?, reset_grace_seconds=?, max_retries=?, retry_base_seconds=?, request_timeout_seconds=?,
-      max_concurrency=?, allow_private_http=?, updated_at=? WHERE id=1`, next.ConnectionUUID, next.BaseURL, ciphertext,
+	      max_concurrency=?, allow_private_http=?, direct_wakeup_enabled=?, updated_at=? WHERE id=1`, next.ConnectionUUID, next.BaseURL, ciphertext,
 		next.GlobalModel, next.SyncIntervalSeconds, next.ResetGraceSeconds, next.MaxRetries, next.RetryBaseSeconds,
-		next.RequestTimeoutSeconds, next.MaxConcurrency, next.AllowPrivateHTTP, now); err != nil {
+		next.RequestTimeoutSeconds, next.MaxConcurrency, next.AllowPrivateHTTP, next.DirectWakeupEnabled, now); err != nil {
 		return err
 	}
 	if rotateConnection {
@@ -286,6 +287,23 @@ func (s *Store) UpdateSettings(ctx context.Context, next Settings, replaceAPIKey
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET next_action_at=NULL, runtime_state='connection_changed', updated_at=?`, now); err != nil {
 			return err
+		}
+	}
+	if current.DirectWakeupEnabled != next.DirectWakeupEnabled {
+		if next.DirectWakeupEnabled {
+			if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state='pending_check', next_action_at=?, last_error='', updated_at=?
+          WHERE missing=0 AND eligible=1 AND runtime_state<>'dispatching' AND id IN (
+            SELECT account_id FROM account_policies WHERE enabled=1
+          )`, now, now); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state='direct_disabled', next_action_at=NULL, last_error='', verification_deadline_at=NULL, updated_at=?
+          WHERE runtime_state<>'dispatching' AND id IN (
+            SELECT account_id FROM account_policies WHERE enabled=1
+          )`, now); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()

@@ -85,16 +85,22 @@ func (s *Store) StartAttempt(ctx context.Context, cycleID string, now, leaseUnti
 }
 
 type AttemptResult struct {
-	Outcome      string
-	HTTPStatus   *int
-	ErrorCode    string
-	Message      string
-	AnswerStatus string
-	AnswerText   string
-	Status       string
-	NextAt       *int64
-	AcceptedAt   *int64
-	Reason       string
+	Outcome                string
+	HTTPStatus             *int
+	ErrorCode              string
+	Message                string
+	AnswerStatus           string
+	AnswerText             string
+	RequestModel           string
+	TransportPath          string
+	AnswerSource           string
+	QuotaEvidence          string
+	TerminalSummary        string
+	Status                 string
+	NextAt                 *int64
+	AcceptedAt             *int64
+	VerificationDeadlineAt *int64
+	Reason                 string
 }
 
 func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, endedAt int64, result AttemptResult) error {
@@ -108,10 +114,13 @@ func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, ended
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO attempts (
-      id, cycle_id, attempt_number, started_at, ended_at, outcome, http_status, error_code, message, answer_status, answer_text
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, cycle.ID, cycle.AttemptCount, startedAt, endedAt,
+      id, cycle_id, attempt_number, started_at, ended_at, outcome, http_status, error_code, message, answer_status, answer_text,
+      request_model, transport_path, answer_source, quota_evidence, terminal_summary
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, cycle.ID, cycle.AttemptCount, startedAt, endedAt,
 		result.Outcome, result.HTTPStatus, truncate(result.ErrorCode, 80), truncate(result.Message, 500),
-		truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000)); err != nil {
+		truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000), truncate(result.RequestModel, 128),
+		truncate(result.TransportPath, 32), truncate(result.AnswerSource, 40), truncate(result.QuotaEvidence, 40),
+		truncate(result.TerminalSummary, 500)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE cycles SET status=?, lease_until=NULL, accepted_at=COALESCE(?, accepted_at),
@@ -123,14 +132,17 @@ func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, ended
 	if result.Status == "success" {
 		accountState = "success_unverified"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, updated_at=? WHERE id=?`,
-		accountState, result.NextAt, truncate(result.Message, 500), endedAt, cycle.AccountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, verification_deadline_at=?, updated_at=? WHERE id=?`,
+		accountState, result.NextAt, truncate(result.Message, 500), result.VerificationDeadlineAt, endedAt, cycle.AccountID); err != nil {
 		return err
 	}
 	if result.AnswerStatus != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
-      SET last_answer_status=?, last_answer_text=?, last_answer_at=?, updated_at=? WHERE id=?`,
-			truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000), endedAt, endedAt, cycle.AccountID); err != nil {
+      SET last_answer_status=?, last_answer_text=?, last_answer_at=?, last_request_model=?,
+          last_transport_path=?, last_answer_source=?, last_quota_evidence=?, last_terminal_summary=?, updated_at=?
+      WHERE id=?`, truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000), endedAt,
+			truncate(result.RequestModel, 128), truncate(result.TransportPath, 32), truncate(result.AnswerSource, 40),
+			truncate(result.QuotaEvidence, 40), truncate(result.TerminalSummary, 500), endedAt, cycle.AccountID); err != nil {
 			return err
 		}
 	}
@@ -151,7 +163,7 @@ func (s *Store) MarkCycle(ctx context.Context, cycleID, status, reason string, n
 	if _, err := tx.ExecContext(ctx, `UPDATE cycles SET status=?, lease_until=NULL, next_attempt_at=NULL, reason=?, updated_at=? WHERE id=?`, status, truncate(reason, 500), now, cycleID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, updated_at=? WHERE id=?`, status, nextAction, truncate(reason, 500), now, accountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, verification_deadline_at=NULL, updated_at=? WHERE id=?`, status, nextAction, truncate(reason, 500), now, accountID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -176,7 +188,8 @@ func (s *Store) ListCycles(ctx context.Context, accountID string, limit int) ([]
 
 func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, cycle_id, attempt_number, started_at, ended_at, outcome,
-      http_status, error_code, message, answer_status, answer_text FROM attempts WHERE cycle_id=? ORDER BY attempt_number`, cycleID)
+      http_status, error_code, message, answer_status, answer_text, request_model, transport_path,
+      answer_source, quota_evidence, terminal_summary FROM attempts WHERE cycle_id=? ORDER BY attempt_number`, cycleID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +199,8 @@ func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, er
 		var item Attempt
 		var ended, status sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.CycleID, &item.AttemptNumber, &item.StartedAt, &ended, &item.Outcome,
-			&status, &item.ErrorCode, &item.Message, &item.AnswerStatus, &item.AnswerText); err != nil {
+			&status, &item.ErrorCode, &item.Message, &item.AnswerStatus, &item.AnswerText, &item.RequestModel,
+			&item.TransportPath, &item.AnswerSource, &item.QuotaEvidence, &item.TerminalSummary); err != nil {
 			return nil, err
 		}
 		item.EndedAt = int64Ptr(ended)
@@ -197,6 +211,81 @@ func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, er
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListVerifyingCycles(ctx context.Context) ([]Cycle, error) {
+	rows, err := s.db.QueryContext(ctx, cycleSelect+` WHERE status='verifying' ORDER BY accepted_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Cycle, 0)
+	for rows.Next() {
+		cycle, err := scanCycle(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cycle)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkCycleVerified(ctx context.Context, cycleID, reason, evidence string, nextAction *int64) (bool, error) {
+	now := time.Now().Unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var accountID string
+	if err := tx.QueryRowContext(ctx, `SELECT account_id FROM cycles WHERE id=?`, cycleID).Scan(&accountID); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE cycles SET status='verified', lease_until=NULL, next_attempt_at=NULL, reason=?, updated_at=?
+      WHERE id=? AND status='verifying'`, truncate(reason, 500), now, cycleID)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return false, tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE attempts SET quota_evidence=? WHERE cycle_id=? AND outcome='accepted'`, truncate(evidence, 40), cycleID); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state='verified', next_action_at=?, last_error='',
+      verification_deadline_at=NULL, last_quota_evidence=?, updated_at=? WHERE id=? AND runtime_state='verifying'`,
+		nextAction, truncate(evidence, 40), now, accountID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+func (s *Store) FinalizeVerification(ctx context.Context, cycleID string, now, fallbackNext int64, reason string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var accountID string
+	if err := tx.QueryRowContext(ctx, `SELECT account_id FROM cycles WHERE id=?`, cycleID).Scan(&accountID); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE cycles SET status='accepted_unverified', lease_until=NULL,
+      next_attempt_at=NULL, reason=?, updated_at=? WHERE id=? AND status='verifying'`, truncate(reason, 500), now, cycleID)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return false, tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state='accepted_unverified', next_action_at=?,
+      last_error='', verification_deadline_at=NULL, updated_at=? WHERE id=? AND runtime_state='verifying'`,
+		fallbackNext, now, accountID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func limitRunes(value string, limit int) string {

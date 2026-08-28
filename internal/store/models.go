@@ -14,6 +14,7 @@ type Settings struct {
 	RequestTimeoutSeconds int       `json:"request_timeout_seconds"`
 	MaxConcurrency        int       `json:"max_concurrency"`
 	AllowPrivateHTTP      bool      `json:"allow_private_http"`
+	DirectWakeupEnabled   bool      `json:"direct_wakeup_enabled"`
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
@@ -73,6 +74,12 @@ type Account struct {
 	LastAnswerStatus        string    `json:"last_answer_status"`
 	LastAnswerText          string    `json:"last_answer_text"`
 	LastAnswerAt            *int64    `json:"last_answer_at,omitempty"`
+	LastRequestModel        string    `json:"last_request_model"`
+	LastTransportPath       string    `json:"last_transport_path"`
+	LastAnswerSource        string    `json:"last_answer_source"`
+	LastQuotaEvidence       string    `json:"last_quota_evidence"`
+	LastTerminalSummary     string    `json:"last_terminal_summary"`
+	VerificationDeadlineAt  *int64    `json:"verification_deadline_at,omitempty"`
 	LastSeenAt              time.Time `json:"last_seen_at"`
 	Policy                  Policy    `json:"policy"`
 }
@@ -119,17 +126,22 @@ type Cycle struct {
 }
 
 type Attempt struct {
-	ID            string `json:"id"`
-	CycleID       string `json:"cycle_id"`
-	AttemptNumber int    `json:"attempt_number"`
-	StartedAt     int64  `json:"started_at"`
-	EndedAt       *int64 `json:"ended_at,omitempty"`
-	Outcome       string `json:"outcome"`
-	HTTPStatus    *int   `json:"http_status,omitempty"`
-	ErrorCode     string `json:"error_code"`
-	Message       string `json:"message"`
-	AnswerStatus  string `json:"answer_status"`
-	AnswerText    string `json:"answer_text"`
+	ID              string `json:"id"`
+	CycleID         string `json:"cycle_id"`
+	AttemptNumber   int    `json:"attempt_number"`
+	StartedAt       int64  `json:"started_at"`
+	EndedAt         *int64 `json:"ended_at,omitempty"`
+	Outcome         string `json:"outcome"`
+	HTTPStatus      *int   `json:"http_status,omitempty"`
+	ErrorCode       string `json:"error_code"`
+	Message         string `json:"message"`
+	AnswerStatus    string `json:"answer_status"`
+	AnswerText      string `json:"answer_text"`
+	RequestModel    string `json:"request_model"`
+	TransportPath   string `json:"transport_path"`
+	AnswerSource    string `json:"answer_source"`
+	QuotaEvidence   string `json:"quota_evidence"`
+	TerminalSummary string `json:"terminal_summary"`
 }
 
 type Event struct {
