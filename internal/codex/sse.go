@@ -29,7 +29,7 @@ func parseSSE(body io.Reader) (string, string, error) {
 		return "", "", &Error{Kind: ErrorSchema, Message: "Codex stream exceeds 1 MiB"}
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(contents))
-	scanner.Buffer(make([]byte, 64<<10), 128<<10)
+	scanner.Buffer(make([]byte, 64<<10), MaxSSEBytes)
 	var deltas strings.Builder
 	doneText := ""
 	completedText := ""

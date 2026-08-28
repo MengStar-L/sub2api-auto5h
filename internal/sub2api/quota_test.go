@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,7 +174,7 @@ func TestParseQuotaRejectsMissingRateLimitAndDuplicates(t *testing.T) {
 	}
 }
 
-func TestAccountsPaginationAndSSE(t *testing.T) {
+func TestAccountsPagination(t *testing.T) {
 	var pages int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("x-api-key") != "admin-secret" {
@@ -197,18 +195,6 @@ func TestAccountsPaginationAndSSE(t *testing.T) {
 				items = append(items, Account{ID: 101, CreatedAt: "2026-08-27T00:00:00Z"})
 			}
 			writeEnvelope(t, w, map[string]any{"items": items, "total": 101})
-		case strings.HasSuffix(r.URL.Path, "/test"):
-			var body map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			if body["prompt"] != WakeupPrompt || body["mode"] != "default" || body["model_id"] != "gpt-text" {
-				t.Fatalf("unexpected test body: %#v", body)
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"content\",\"text\":\"2\"}\n\n")
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"content\",\"text\":\"1\"}\n\n")
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"test_complete\",\"success\":true}\n\n")
 		default:
 			http.NotFound(w, r)
 		}
@@ -221,32 +207,6 @@ func TestAccountsPaginationAndSSE(t *testing.T) {
 	accounts, err := client.Accounts(context.Background())
 	if err != nil || len(accounts) != 101 || pages != 2 {
 		t.Fatalf("accounts=%d pages=%d err=%v", len(accounts), pages, err)
-	}
-	result, err := client.TestAccount(context.Background(), 7, "gpt-text")
-	if err != nil || !result.Success || result.Reply != "21" {
-		t.Fatalf("result=%#v err=%v", result, err)
-	}
-}
-
-func TestSSEReplyIsBoundedByUnicodeCharacters(t *testing.T) {
-	want := strings.Repeat("智", maxReplyRunes)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		payload, err := json.Marshal(map[string]any{"type": "content", "text": strings.Repeat("智", maxReplyRunes+100)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"test_complete\",\"success\":true}\n\n")
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL, "key", true, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.TestAccount(context.Background(), 1, "gpt-text")
-	if err != nil || result.Reply != want || len([]rune(result.Reply)) != maxReplyRunes {
-		t.Fatalf("reply runes=%d err=%v", len([]rune(result.Reply)), err)
 	}
 }
 
@@ -283,18 +243,6 @@ func TestEmptyCollectionsMarshalAsArrays(t *testing.T) {
 		if string(encoded) != "[]" {
 			t.Fatalf("empty client collection encoded as %s", encoded)
 		}
-	}
-}
-
-func TestSSERequiresTerminalSuccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"content\",\"text\":\"ok\"}\n\n")
-	}))
-	defer server.Close()
-	client, _ := NewClient(server.URL, "key", true, time.Second)
-	if _, err := client.TestAccount(context.Background(), 1, "gpt-text"); err == nil {
-		t.Fatal("EOF without test_complete must fail")
 	}
 }
 

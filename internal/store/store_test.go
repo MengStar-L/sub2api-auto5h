@@ -136,7 +136,9 @@ func TestFinishAttemptPersistsAnswerAssessment(t *testing.T) {
 	}
 	ended := started + 1
 	if err := data.FinishAttempt(ctx, claimed, started, ended, AttemptResult{
-		Outcome: "accepted", Status: "success_unverified", AnswerStatus: "abnormal", AnswerText: "答案是 29",
+		Outcome: "accepted", Status: "verifying", AnswerStatus: "abnormal", AnswerText: "答案是 29",
+		RequestModel: "gpt-text", TransportPath: "proxy:socks5", AnswerSource: "official_codex_sse",
+		QuotaEvidence: "official_headers", TerminalSummary: "response.completed; reply_runes=5",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,11 +147,15 @@ func TestFinishAttemptPersistsAnswerAssessment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.LastAnswerStatus != "abnormal" || updated.LastAnswerText != "答案是 29" || updated.LastAnswerAt == nil || *updated.LastAnswerAt != ended {
+	if updated.LastAnswerStatus != "abnormal" || updated.LastAnswerText != "答案是 29" || updated.LastAnswerAt == nil || *updated.LastAnswerAt != ended ||
+		updated.LastRequestModel != "gpt-text" || updated.LastTransportPath != "proxy:socks5" || updated.LastAnswerSource != "official_codex_sse" ||
+		updated.LastQuotaEvidence != "official_headers" || updated.LastTerminalSummary != "response.completed; reply_runes=5" {
 		t.Fatalf("account answer=%#v", updated)
 	}
 	attempts, err := data.ListAttempts(ctx, cycle.ID)
-	if err != nil || len(attempts) != 1 || attempts[0].AnswerStatus != "abnormal" || attempts[0].AnswerText != "答案是 29" {
+	if err != nil || len(attempts) != 1 || attempts[0].AnswerStatus != "abnormal" || attempts[0].AnswerText != "答案是 29" ||
+		attempts[0].RequestModel != "gpt-text" || attempts[0].TransportPath != "proxy:socks5" || attempts[0].AnswerSource != "official_codex_sse" ||
+		attempts[0].QuotaEvidence != "official_headers" || attempts[0].TerminalSummary != "response.completed; reply_runes=5" {
 		t.Fatalf("attempts=%#v err=%v", attempts, err)
 	}
 

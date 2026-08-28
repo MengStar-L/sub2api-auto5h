@@ -55,10 +55,3 @@ func (q Quota) KnownIdle(now time.Time) bool {
 	fiveIdle := q.FiveHour == nil || q.FiveHour.UsedPercent == 0 || q.FiveHour.ResetAt <= now.Unix()
 	return fiveIdle && q.Allowed && !q.LimitReached && !q.SevenExhausted(now)
 }
-
-type TestResult struct {
-	HTTPStatus int
-	Success    bool
-	Message    string
-	Reply      string
-}

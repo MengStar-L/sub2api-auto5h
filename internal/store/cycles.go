@@ -97,6 +97,7 @@ type AttemptResult struct {
 	QuotaEvidence          string
 	TerminalSummary        string
 	Status                 string
+	AccountState           string
 	NextAt                 *int64
 	AcceptedAt             *int64
 	VerificationDeadlineAt *int64
@@ -129,8 +130,8 @@ func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, ended
 		return err
 	}
 	accountState := result.Status
-	if result.Status == "success" {
-		accountState = "success_unverified"
+	if result.AccountState != "" {
+		accountState = result.AccountState
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, verification_deadline_at=?, updated_at=? WHERE id=?`,
 		accountState, result.NextAt, truncate(result.Message, 500), result.VerificationDeadlineAt, endedAt, cycle.AccountID); err != nil {

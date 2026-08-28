@@ -266,7 +266,7 @@ func (s *Store) SetPolicy(ctx context.Context, id string, policy Policy) error {
 			state = "direct_disabled"
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error='', updated_at=? WHERE id=?`, state, next, now, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error='', verification_deadline_at=NULL, updated_at=? WHERE id=?`, state, next, now, id); err != nil {
 		return err
 	}
 	if !policy.Enabled {

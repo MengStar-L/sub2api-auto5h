@@ -5,6 +5,7 @@ const appCommand = [
   'SUB2API_AUTO5H_LISTEN=127.0.0.1:18080',
   'SUB2API_AUTO5H_DB_PATH=../.e2e-data/app.db',
   'SUB2API_AUTO5H_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+  'SUB2API_AUTO5H_E2E_CODEX_URL=http://127.0.0.1:18082/backend-api/codex/responses',
   '../build/e2e/sub2api-auto5h serve 2>&1 | tee ../.e2e-data/app.log',
 ].join(' ')
 

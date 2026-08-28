@@ -40,3 +40,24 @@ func TestParseSSEBoundsUnicodeReply(t *testing.T) {
 		t.Fatalf("runes=%d err=%v", len([]rune(reply)), err)
 	}
 }
+
+func TestParseSSEAcceptsDoneAndRejectsErrorOrMalformedEvents(t *testing.T) {
+	reply, terminal, err := parseSSE(strings.NewReader("data: {\"type\":\"response.output_text.done\",\"text\":\"29\"}\n\ndata: {\"type\":\"response.done\",\"response\":{\"output\":[]}}\n\n"))
+	if err != nil || reply != "29" || terminal != "response.done" {
+		t.Fatalf("reply=%q terminal=%q err=%v", reply, terminal, err)
+	}
+	for _, stream := range []string{
+		"data: {\"type\":\"response.failed\",\"error\":{\"code\":\"failed\",\"message\":\"request failed\"}}\n\n",
+		"data: {bad json}\n\n",
+	} {
+		if _, _, err := parseSSE(strings.NewReader(stream)); err == nil {
+			t.Fatalf("expected stream rejection for %q", stream)
+		}
+	}
+}
+
+func TestParseSSERejectsOversizedStream(t *testing.T) {
+	if _, _, err := parseSSE(strings.NewReader(strings.Repeat("x", MaxSSEBytes+1))); err == nil {
+		t.Fatal("expected oversized stream rejection")
+	}
+}

@@ -79,13 +79,12 @@ func (s *Service) activateAt(ctx context.Context, endpoint string, request Reque
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	req.Header.Set("Originator", "codex-tui")
 	req.Header.Set("User-Agent", userAgent)
-	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return Result{TransportPath: path}, &Error{Kind: ErrorTransient, Message: secure.Redact("Codex request failed: " + err.Error()), Cause: err}
 	}
 	defer resp.Body.Close()
-	limits, limitErr := ParseRateLimits(resp.Header, started)
+	limits, limitErr := ParseRateLimits(resp.Header, time.Now())
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message, code := readSafeError(resp.Body)
 		kind := ErrorRejected

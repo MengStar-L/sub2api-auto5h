@@ -160,6 +160,15 @@ func (s *Server) refreshQuota(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) runAccount(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	settings, err := s.store.GetSettings(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !settings.DirectWakeupEnabled {
+		writeError(w, 409, "DIRECT_WAKEUP_DISABLED", "官方 Codex 直连唤醒尚未启用")
+		return
+	}
 	account, err := s.store.GetAccount(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
@@ -222,7 +231,8 @@ func settingsView(settings store.Settings) map[string]any {
 		"sync_interval_seconds": settings.SyncIntervalSeconds, "reset_grace_seconds": settings.ResetGraceSeconds,
 		"max_retries": settings.MaxRetries, "retry_base_seconds": settings.RetryBaseSeconds,
 		"request_timeout_seconds": settings.RequestTimeoutSeconds, "max_concurrency": settings.MaxConcurrency,
-		"allow_private_http": settings.AllowPrivateHTTP, "updated_at": settings.UpdatedAt,
+		"allow_private_http": settings.AllowPrivateHTTP, "direct_wakeup_enabled": settings.DirectWakeupEnabled,
+		"updated_at": settings.UpdatedAt,
 	}
 }
 
@@ -246,6 +256,8 @@ type settingsRequest struct {
 	RetryBaseSeconds      int    `json:"retry_base_seconds"`
 	RequestTimeoutSeconds int    `json:"request_timeout_seconds"`
 	MaxConcurrency        int    `json:"max_concurrency"`
+	DirectWakeupEnabled   bool   `json:"direct_wakeup_enabled"`
+	DirectWakeupRiskAck   bool   `json:"direct_wakeup_risk_acknowledged"`
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
@@ -262,10 +274,15 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		GlobalModel: strings.TrimSpace(request.GlobalModel), AllowPrivateHTTP: request.AllowPrivateHTTP,
 		SyncIntervalSeconds: request.SyncIntervalSeconds, ResetGraceSeconds: request.ResetGraceSeconds,
 		MaxRetries: request.MaxRetries, RetryBaseSeconds: request.RetryBaseSeconds,
-		RequestTimeoutSeconds: request.RequestTimeoutSeconds, MaxConcurrency: request.MaxConcurrency}
+		RequestTimeoutSeconds: request.RequestTimeoutSeconds, MaxConcurrency: request.MaxConcurrency,
+		DirectWakeupEnabled: request.DirectWakeupEnabled}
 	replaceKey := strings.TrimSpace(request.APIKey) != ""
 	if !replaceKey {
 		next.APIKey = current.APIKey
+	}
+	if next.DirectWakeupEnabled && !current.DirectWakeupEnabled && !request.DirectWakeupRiskAck {
+		writeError(w, 400, "DIRECT_WAKEUP_ACK_REQUIRED", "启用官方 Codex 直连唤醒前必须确认凭据与网络风险")
+		return
 	}
 	if err := validateSettings(next); err != nil {
 		writeError(w, 400, "INVALID_SETTINGS", err.Error())
@@ -308,7 +325,8 @@ func (s *Server) testSettings(w http.ResponseWriter, r *http.Request) {
 	settings := store.Settings{BaseURL: request.BaseURL, APIKey: request.APIKey, GlobalModel: strings.TrimSpace(request.GlobalModel),
 		AllowPrivateHTTP: request.AllowPrivateHTTP, SyncIntervalSeconds: request.SyncIntervalSeconds,
 		ResetGraceSeconds: request.ResetGraceSeconds, MaxRetries: request.MaxRetries, RetryBaseSeconds: request.RetryBaseSeconds,
-		RequestTimeoutSeconds: request.RequestTimeoutSeconds, MaxConcurrency: request.MaxConcurrency}
+		RequestTimeoutSeconds: request.RequestTimeoutSeconds, MaxConcurrency: request.MaxConcurrency,
+		DirectWakeupEnabled: request.DirectWakeupEnabled}
 	if settings.APIKey == "" {
 		settings.APIKey = current.APIKey
 	}

@@ -100,6 +100,8 @@ progress::-moz-progress-bar { background: var(--blue); }
 .status-badge.warning { color: var(--amber); border-color: #ead5aa; background: #fff8e9; }
 .status-badge.danger { color: var(--red); border-color: #e8c0c0; background: #fff2f2; }
 .status-badge.warning .dot { background: var(--amber); }
+.assessment-cell { display: grid; justify-items: start; gap: 4px; max-width: 190px; }
+.assessment-cell small { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty-state { padding: 32px !important; color: var(--muted); text-align: center; }
 
 .drawer-backdrop { position: fixed; z-index: 20; inset: 0; display: flex; justify-content: flex-end; background: rgb(20 25 30 / 35%); }
@@ -139,6 +141,11 @@ progress::-moz-progress-bar { background: var(--blue); }
 .attempt-assessment { display: grid; justify-items: start; gap: 5px; margin-top: 5px; }
 .attempt-assessment .answer-text { width: 100%; margin: 0; }
 .muted-copy { margin: 0; color: var(--muted); font-size: 12px; }
+.verification-note { margin: -10px 0 0; padding: 8px 10px; color: var(--amber); border: 1px solid #ead5aa; border-radius: 4px; background: #fff8e9; font-size: 12px; }
+.result-metadata { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 12px 0 0; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.result-metadata div { min-width: 0; padding: 8px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.result-metadata dt { color: var(--muted); font-size: 11px; }
+.result-metadata dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 12px; }
 
 .auth-page, .setup-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #eef1f3; }
 .auth-panel, .setup-panel { width: min(100%, 420px); padding: 28px; border: 1px solid var(--line); border-radius: 6px; background: #fff; box-shadow: 0 12px 35px rgb(30 38 45 / 10%); }
@@ -167,6 +174,14 @@ progress::-moz-progress-bar { background: var(--blue); }
 .settings-band header h2 { margin: 0; }
 .configured { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-size: 12px; }
 .settings-band .checkbox-row { justify-content: flex-start; gap: 8px; margin-top: 14px; }
+.direct-wakeup-band header > div { min-width: 0; padding-right: 20px; }
+.direct-wakeup-band header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; font-weight: 400; }
+.switch-row { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; color: var(--text); }
+.switch-row input, .risk-ack input { width: 17px; height: 17px; }
+.security-note { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-alt); font-size: 12px; }
+.security-note span { color: var(--muted); }
+.risk-ack { display: grid; grid-template-columns: 18px 1fr; align-items: start; gap: 9px; margin-top: 12px; padding: 11px 12px; color: #684407; border: 1px solid #ead5aa; border-radius: 5px; background: #fff8e9; line-height: 1.5; }
+.risk-ack input { margin-top: 1px; }
 
 @media (max-width: 820px) {
   .app-shell { display: block; }
@@ -216,6 +231,8 @@ progress::-moz-progress-bar { background: var(--blue); }
   .drawer-body { padding-left: 14px; padding-right: 14px; }
   .detail-strip { margin-left: -14px; margin-right: -14px; padding-left: 14px; padding-right: 14px; }
   .quota-list { grid-template-columns: 1fr; }
+  .result-metadata { grid-template-columns: 1fr; }
+  .result-metadata .wide { grid-column: auto; }
   .auth-page, .setup-page { padding: 12px; align-items: start; }
   .auth-panel, .setup-panel { margin-top: 24px; padding: 20px; }
 }

@@ -34,6 +34,15 @@ func TestParseRateLimitsRejectsIncompleteAndDuplicateWindows(t *testing.T) {
 			"x-codex-primary-window-minutes": []string{"300"}, "x-codex-primary-used-percent": []string{"1"}, "x-codex-primary-reset-after-seconds": []string{"100"},
 			"x-codex-secondary-window-minutes": []string{"300"}, "x-codex-secondary-used-percent": []string{"2"}, "x-codex-secondary-reset-after-seconds": []string{"200"},
 		},
+		{
+			"x-codex-primary-window-minutes": []string{"60"}, "x-codex-primary-used-percent": []string{"1"}, "x-codex-primary-reset-after-seconds": []string{"100"},
+		},
+		{
+			"x-codex-primary-window-minutes": []string{"300"}, "x-codex-primary-used-percent": []string{"101"}, "x-codex-primary-reset-after-seconds": []string{"100"},
+		},
+		{
+			"x-codex-primary-window-minutes": []string{"300"}, "x-codex-primary-used-percent": []string{"1"}, "x-codex-primary-reset-after-seconds": []string{"19000"},
+		},
 	} {
 		if _, err := ParseRateLimits(header, time.Now()); err == nil {
 			t.Fatal("expected invalid rate-limit headers")

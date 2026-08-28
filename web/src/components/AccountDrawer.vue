@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Play, RefreshCw, Save, X } from 'lucide-vue-next'
 import { api } from '../api'
 import type { Account, Attempt, Cycle } from '../types'
@@ -13,6 +13,8 @@ const error = ref('')
 const cycles = ref<Cycle[]>([])
 const attempts = ref<Record<string, Attempt[]>>({})
 const models = ref<string[]>([])
+const now = ref(Math.floor(Date.now() / 1000))
+let timer: number | undefined
 const form = reactive({
   enabled: props.account.policy.enabled,
   model_override: props.account.policy.model_override ?? '',
@@ -21,6 +23,7 @@ const form = reactive({
   retry_base_override_seconds: props.account.policy.retry_base_override_seconds ?? null as number | null,
 })
 const canRun = computed(() => props.account.policy.enabled && ['due', 'retry_wait', 'attention', 'quota_retry', 'pending_check', 'failed'].includes(props.account.runtime_state))
+const verificationRemaining = computed(() => Math.max(0, (props.account.verification_deadline_at ?? now.value) - now.value))
 
 function when(value?: number) { return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value * 1000)) : '—' }
 function nullable(value: number | null) { return value === null || Number.isNaN(value) ? null : value }
@@ -59,7 +62,11 @@ async function run() {
   catch (reason) { error.value = reason instanceof Error ? reason.message : '执行失败' }
   finally { busy.value = false }
 }
-onMounted(() => Promise.all([loadHistory(), loadModels()]))
+onMounted(() => {
+  timer = window.setInterval(() => { now.value = Math.floor(Date.now() / 1000) }, 1000)
+  return Promise.all([loadHistory(), loadModels()])
+})
+onBeforeUnmount(() => window.clearInterval(timer))
 </script>
 
 <template>
@@ -68,6 +75,7 @@ onMounted(() => Promise.all([loadHistory(), loadModels()]))
       <header class="drawer-header"><div><strong>{{ account.name || account.email || `账号 ${account.remote_id}` }}</strong><span>sub2api #{{ account.remote_id }}</span></div><button class="icon-button ghost" title="关闭" @click="emit('close')"><X :size="20" /></button></header>
       <div class="drawer-body">
         <section class="detail-strip"><div><span>套餐</span><strong>{{ account.plan_type || '未知' }}</strong></div><div><span>状态</span><StatusBadge :state="account.runtime_state" /></div><div><span>下次动作</span><strong>{{ when(account.next_action_at) }}</strong></div></section>
+        <p v-if="account.runtime_state === 'verifying'" class="verification-note">正在补充核验额度，最迟 {{ verificationRemaining }} 秒后结束。</p>
         <p v-if="account.last_error" class="inline-alert">{{ account.last_error }}</p>
         <section class="drawer-section">
           <h2>自动化策略</h2>
@@ -88,10 +96,11 @@ onMounted(() => Promise.all([loadHistory(), loadModels()]))
           <template v-if="account.last_answer_status">
             <div class="assessment-row"><IntelligenceBadge :status="account.last_answer_status" /><span>{{ when(account.last_answer_at) }}</span></div>
             <pre class="answer-text">{{ account.last_answer_text || '空回复' }}</pre>
+            <dl class="result-metadata"><div><dt>请求模型</dt><dd>{{ account.last_request_model || '—' }}</dd></div><div><dt>传输路径</dt><dd>{{ account.last_transport_path || '—' }}</dd></div><div><dt>回答来源</dt><dd>{{ account.last_answer_source || '—' }}</dd></div><div><dt>额度证据</dt><dd>{{ account.last_quota_evidence || '未确认' }}</dd></div><div class="wide"><dt>请求终态</dt><dd>{{ account.last_terminal_summary || '—' }}</dd></div></dl>
           </template>
           <p v-else class="muted-copy">尚未进行检测</p>
         </section>
-        <section class="drawer-section"><h2>周期与尝试</h2><div class="timeline"><article v-for="cycle in cycles" :key="cycle.id"><button @click="loadAttempts(cycle)"><span>{{ cycle.cycle_key }}</span><StatusBadge :state="cycle.status" /><small>{{ when(cycle.created_at) }} · {{ cycle.attempt_count }} 次尝试</small></button><ul v-if="attempts[cycle.id]"><li v-for="attempt in attempts[cycle.id]" :key="attempt.id"><strong>#{{ attempt.attempt_number }} {{ attempt.outcome }}</strong><span>{{ attempt.message || attempt.error_code || '—' }}</span><div v-if="attempt.answer_status" class="attempt-assessment"><IntelligenceBadge :status="attempt.answer_status" /><pre class="answer-text">{{ attempt.answer_text || '空回复' }}</pre></div></li></ul></article><p v-if="!cycles.length" class="empty-state">暂无周期记录</p></div></section>
+        <section class="drawer-section"><h2>周期与尝试</h2><div class="timeline"><article v-for="cycle in cycles" :key="cycle.id"><button @click="loadAttempts(cycle)"><span>{{ cycle.cycle_key }}</span><StatusBadge :state="cycle.status" /><small>{{ when(cycle.created_at) }} · {{ cycle.attempt_count }} 次尝试</small></button><ul v-if="attempts[cycle.id]"><li v-for="attempt in attempts[cycle.id]" :key="attempt.id"><strong>#{{ attempt.attempt_number }} {{ attempt.outcome }}</strong><span>{{ attempt.message || attempt.error_code || '—' }}</span><div v-if="attempt.answer_status" class="attempt-assessment"><IntelligenceBadge :status="attempt.answer_status" /><pre class="answer-text">{{ attempt.answer_text || '空回复' }}</pre><small>{{ attempt.request_model || '—' }} · {{ attempt.transport_path || '—' }} · {{ attempt.quota_evidence || '额度未确认' }}</small><small>{{ attempt.terminal_summary || '—' }}</small></div></li></ul></article><p v-if="!cycles.length" class="empty-state">暂无周期记录</p></div></section>
       </div>
     </aside>
   </div>

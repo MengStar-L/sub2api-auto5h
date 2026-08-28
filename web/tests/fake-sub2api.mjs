@@ -45,19 +45,59 @@ const server = http.createServer(async (request, response) => {
     })
   }
   if (request.url === '/api/v1/admin/accounts/7/models') return send(response, [{ id: 'gpt-text-e2e' }])
-  if (request.url === '/api/v1/admin/accounts/7/test') {
-    const body = await readJSON(request)
-    if (!body.prompt?.includes('最少取出多少个糖果') || !body.prompt?.includes('只能返回一个阿拉伯数字') || body.mode !== 'default' || body.model_id !== 'gpt-text-e2e') {
-      return send(response, null, 400)
-    }
-    activated = true
-    activatedAt = now()
-    response.writeHead(200, { 'content-type': 'text/event-stream' })
-    response.end('data: {"type":"content","text":"2"}\n\ndata: {"type":"content","text":"1"}\n\ndata: {"type":"test_complete","success":true}\n\n')
-    return
+  if (request.url === '/api/v1/admin/accounts/data?ids=7&include_proxies=true') {
+    return send(response, {
+      accounts: [{
+        platform: 'openai', type: 'oauth', proxy_key: null, extra: {},
+        credentials: {
+          access_token: 'e2e-access-token', chatgpt_account_id: 'workspace-plus-7',
+          email: 'plus@example.com', expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        },
+      }],
+      proxies: [],
+    })
   }
+  if (request.url === '/api/v1/admin/openai/accounts/7/refresh' && request.method === 'POST') return send(response, {})
   send(response, null, 404)
 })
 
+const codexServer = http.createServer(async (request, response) => {
+  if (request.url === '/health') {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end('{"status":"ok"}')
+    return
+  }
+  if (request.url === '/backend-api/codex/responses' && request.method === 'POST') {
+    const body = await readJSON(request)
+    const prompt = body.input?.[0]?.content?.[0]?.text
+    if (request.headers.authorization !== 'Bearer e2e-access-token' || request.headers['chatgpt-account-id'] !== 'workspace-plus-7' ||
+        !prompt?.includes('最少取出多少个糖果') || !body.instructions?.includes('只能返回一个阿拉伯数字') ||
+        body.model !== 'gpt-text-e2e' || body.store !== false || body.stream !== true) {
+      response.writeHead(400, { 'content-type': 'application/json' })
+      response.end('{"error":{"code":"bad_fixture_request","message":"invalid request"}}')
+      return
+    }
+    activated = true
+    activatedAt = now()
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'x-codex-primary-window-minutes': '300',
+      'x-codex-primary-used-percent': '1',
+      'x-codex-primary-reset-after-seconds': '17900',
+      'x-codex-secondary-window-minutes': '10080',
+      'x-codex-secondary-used-percent': '5',
+      'x-codex-secondary-reset-after-seconds': '500000',
+    })
+    response.end('data: {"type":"response.output_text.delta","delta":"2"}\n\ndata: {"type":"response.output_text.done","text":"21"}\n\ndata: {"type":"response.completed","response":{"output":[]}}\n\n')
+    return
+  }
+  response.writeHead(404, { 'content-type': 'application/json' })
+  response.end('{"error":{"code":"not_found","message":"not found"}}')
+})
+
 server.listen(18081, '127.0.0.1')
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => process.exit(0)))
+codexServer.listen(18082, '127.0.0.1')
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
+  server.close()
+  codexServer.close(() => process.exit(0))
+})

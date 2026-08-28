@@ -34,7 +34,7 @@ func ParseRateLimits(header http.Header, now time.Time) (RateLimits, error) {
 			return RateLimits{}, fmt.Errorf("%s used-percent is invalid", slot)
 		}
 		resetAfter, err := strconv.ParseInt(resetValue, 10, 64)
-		if err != nil || resetAfter <= 0 || resetAfter > int64(SevenDayMinutes*60)+300 {
+		if err != nil || resetAfter <= 0 || resetAfter > int64(minutes*60)+300 {
 			return RateLimits{}, fmt.Errorf("%s reset-after-seconds is invalid", slot)
 		}
 		window := &RateWindow{UsedPercent: used, ResetAfterSeconds: resetAfter, ResetAt: now.Unix() + resetAfter}
