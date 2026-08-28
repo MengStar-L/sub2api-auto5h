@@ -10,7 +10,7 @@ func TestLoadUsesPackagedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Listen != "127.0.0.1:2555" {
+	if cfg.Listen != "0.0.0.0:2555" {
 		t.Fatalf("listen = %q", cfg.Listen)
 	}
 	if cfg.DBPath != "/opt/sub2apiauto5h/data/app.db" {

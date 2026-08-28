@@ -68,7 +68,7 @@ read_unit_install_dir() {
 read_configured_port() {
   source_env=${1:-}
   [ -f "$source_env" ] || return 1
-  value=$(sed -n 's/^SUB2API_AUTO5H_LISTEN=127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' "$source_env" | tail -n 1)
+  value=$(sed -n 's/^SUB2API_AUTO5H_LISTEN=.*:\([0-9][0-9]*\)$/\1/p' "$source_env" | tail -n 1)
   validate_port "$value"
 }
 
@@ -102,7 +102,7 @@ select_port() {
   if [ "${SUB2API_AUTO5H_PORT+x}" = "x" ]; then
     selected=$SUB2API_AUTO5H_PORT
   else
-    selected=$(prompt_value "Loopback listen port" "$suggested")
+    selected=$(prompt_value "Listen port" "$suggested")
   fi
   validate_port "$selected" || die "listen port must be an integer from 1 to 65535 without leading zeroes"
 }
@@ -138,7 +138,7 @@ write_environment() {
     } >"$temporary"
   fi
   {
-    printf 'SUB2API_AUTO5H_LISTEN=127.0.0.1:%s\n' "$listen_port"
+    printf 'SUB2API_AUTO5H_LISTEN=0.0.0.0:%s\n' "$listen_port"
     printf 'SUB2API_AUTO5H_DB_PATH=%s/data/app.db\n' "$install_root"
   } >>"$temporary"
   mv -f "$temporary" "$output_env"

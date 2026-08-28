@@ -52,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scri
 | SQLite | `/opt/sub2apiauto5h/data/app.db` |
 | 升级备份 | `/opt/sub2apiauto5h/backups/` |
 
-安装目录必须是专用的安全绝对路径；脚本拒绝 `/`、`/opt`、`/usr` 等宽泛目录、符号链接和非空的新目标目录。端口必须为 `1–65535`。服务始终只绑定 `127.0.0.1:<所选端口>`，不会由安装器直接暴露到公网。
+安装目录必须是专用的安全绝对路径；脚本拒绝 `/`、`/opt`、`/usr` 等宽泛目录、符号链接和非空的新目标目录。端口必须为 `1–65535`。服务默认绑定 `0.0.0.0:<所选端口>`，即监听宿主机全部 IPv4 接口。安装器不会修改防火墙或云安全组；请勿向公网直接开放该端口。
 
 查看状态和首次 setup token：
 
@@ -73,13 +73,33 @@ ssh -L 2555:127.0.0.1:2555 your-server
 
 随后打开 `http://127.0.0.1:2555`。若安装时选择了其他端口，请同步替换隧道两端和浏览器地址。
 
-如需公网访问，请置于 HTTPS 反向代理之后，并把环境文件中的：
+如需从 Docker 中的 Nginx 或 Nginx Proxy Manager 反向代理面板，建议在其 Compose 服务中加入宿主机映射：
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+反向代理上游填写 `http://host.docker.internal:2555`；若使用自定义端口，请替换 `2555`。等价的 Nginx 配置示例：
+
+```nginx
+location / {
+    proxy_pass http://host.docker.internal:2555;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+公网访问必须置于 HTTPS 反向代理之后，并把环境文件中的：
 
 ```ini
 SUB2API_AUTO5H_COOKIE_SECURE=true
 ```
 
-设为 `true` 后重启服务。不要把面板直接绑定到公网 HTTP 地址。
+设为 `true` 后重启服务。同时用宿主机防火墙和云安全组阻止公网直接访问监听端口，只放行 HTTPS 反向代理入口。
 
 ## 首次设置
 

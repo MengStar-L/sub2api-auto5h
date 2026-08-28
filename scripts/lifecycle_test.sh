@@ -69,13 +69,17 @@ expect_failure() {
   } >"$old_env"
   write_environment "$old_env" "$new_env" "$custom_root" 3000 "" || fail "environment rewrite failed"
   grep -qx 'SUB2API_AUTO5H_MASTER_KEY=known-key' "$new_env" || fail "master key was not preserved"
-  grep -qx 'SUB2API_AUTO5H_LISTEN=127.0.0.1:3000' "$new_env" || fail "listen address was not updated"
+  grep -qx 'SUB2API_AUTO5H_LISTEN=0.0.0.0:3000' "$new_env" || fail "listen address was not updated"
   grep -qx "SUB2API_AUTO5H_DB_PATH=$custom_root/data/app.db" "$new_env" || fail "database path was not updated"
   grep -qx 'SUB2API_AUTO5H_COOKIE_SECURE=true' "$new_env" || fail "cookie setting was not preserved"
   grep -qx 'SUB2API_AUTO5H_FUTURE=value' "$new_env" || fail "unknown setting was not preserved"
   ! grep -q '8090' "$new_env" || fail "legacy listen port remained"
   ! grep -q '/var/lib/sub2api-auto5h/app.db' "$new_env" || fail "legacy database path remained"
   [ "$(read_configured_port "$new_env")" = "3000" ] || fail "configured port could not be read"
+
+  bridge_env="$test_root/bridge.env"
+  echo 'SUB2API_AUTO5H_LISTEN=172.19.0.1:4321' >"$bridge_env"
+  [ "$(read_configured_port "$bridge_env")" = "4321" ] || fail "Docker bridge listen port could not be read"
 
   fake_binary="$test_root/fake-sub2api-auto5h"
   fresh_env="$test_root/fresh.env"
@@ -87,7 +91,7 @@ expect_failure() {
   write_environment "$test_root/missing.env" "$fresh_env" "$custom_root" 2555 "$fake_binary" || fail "fresh environment generation failed"
   grep -qx 'SUB2API_AUTO5H_MASTER_KEY=fresh-key' "$fresh_env" || fail "fresh master key was not written"
   grep -qx 'SUB2API_AUTO5H_COOKIE_SECURE=false' "$fresh_env" || fail "fresh cookie default was not written"
-  grep -qx 'SUB2API_AUTO5H_LISTEN=127.0.0.1:2555' "$fresh_env" || fail "fresh listen default was not written"
+  grep -qx 'SUB2API_AUTO5H_LISTEN=0.0.0.0:2555' "$fresh_env" || fail "fresh listen default was not written"
 )
 
 (
