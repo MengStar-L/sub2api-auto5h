@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sub2api-auto5h 初始化边界调整设计</title>
+  <style>
+    :root { color-scheme: light; --ink: #17212b; --muted: #596674; --line: #d7dee5; --blue: #0969a9; --blue-soft: #e9f4fb; --warn: #8a4b08; --warn-soft: #fff4df; --paper: #ffffff; --page: #f3f6f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(920px, calc(100% - 32px)); margin: 32px auto; padding: 38px 44px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgb(23 33 43 / 8%); }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+    h2 { margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 19px; letter-spacing: 0; }
+    p { margin: 9px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 5px 0; }
+    code { padding: 2px 5px; border-radius: 4px; background: #eef1f4; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .lead { color: var(--muted); font-size: 17px; }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 22px 0; }
+    .fact { padding: 13px 14px; border: 1px solid var(--line); border-radius: 6px; background: #fafcfd; }
+    .fact strong { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; font-weight: 650; text-transform: uppercase; }
+    .flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 10px; margin: 16px 0; }
+    .flow div { min-height: 86px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--blue-soft); }
+    .arrow { color: var(--blue); font-weight: 700; }
+    .note { padding: 12px 14px; border-left: 4px solid var(--blue); background: var(--blue-soft); }
+    .warning { padding: 12px 14px; border-left: 4px solid var(--warn); background: var(--warn-soft); color: #633705; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    th, td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f5f8fa; }
+    @media (max-width: 700px) {
+      main { width: 100%; margin: 0; padding: 24px 18px; border: 0; border-radius: 0; }
+      .facts { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); justify-self: center; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>初始化只验证管理连接</h1>
+  <p class="lead">将 sub2api-auto5h 的首次初始化与 OpenAI OAuth 账号健康状态解耦，避免单个失效账号阻止管理员进入应用。</p>
+
+  <div class="facts">
+    <div class="fact"><strong>初始化唯一远端调用</strong><code>GET /api/v1/admin/system/version</code></div>
+    <div class="fact"><strong>成功条件</strong>Admin API Key 有效且版本满足最低要求</div>
+    <div class="fact"><strong>账号与额度</strong>初始化完成后在应用内处理</div>
+  </div>
+
+  <h2>问题</h2>
+  <p>当前初始化会先读取版本和全部 OpenAI OAuth 账号，再对第一个母账号调用 quota。只要该账号的 OpenAI OAuth Token 失效，即使 sub2api Admin API Key 完全有效，初始化也会被上游 401 阻断。</p>
+  <p>这混淆了两种不同状态：管理连接是否有效，以及某个远端账号是否健康。</p>
+
+  <h2>目标与非目标</h2>
+  <ul>
+    <li>初始化只验证 sub2api 管理连接、Admin API Key 和最低兼容版本。</li>
+    <li>初始化期间不调用 accounts、quota、models 或 test 接口。</li>
+    <li>账号同步和 quota 错误在应用内展示，不影响管理员完成初始化和登录。</li>
+    <li>单个账号 quota 的 401、403 或 423 只暂停该账号，不触发全局暂停。</li>
+    <li>账号列表等管理接口的 401、403 或 423 仍作为连接级故障，全局暂停调度。</li>
+  </ul>
+  <p class="warning">本变更不放宽自动激活前的 quota 预检。任何账号在发送 <code>hi</code> 前仍必须通过原有 quota 结构和状态检查。</p>
+
+  <h2>数据流</h2>
+  <div class="flow">
+    <div><strong>1. 初始化</strong><br>验证 Setup Token、本地字段和管理员密码。</div>
+    <span class="arrow">→</span>
+    <div><strong>2. 连接验证</strong><br>仅请求版本接口，验证 Admin API Key 与最低版本。</div>
+    <span class="arrow">→</span>
+    <div><strong>3. 进入应用</strong><br>保存设置、完成初始化、唤醒调度器异步同步账号。</div>
+  </div>
+  <p class="note">账号页首次打开时可能短暂为空；后台同步完成后账号出现。同步失败时由应用的全局状态和事件页展示连接错误。</p>
+
+  <h2>错误归属</h2>
+  <table>
+    <thead><tr><th>调用位置</th><th>错误</th><th>处理</th></tr></thead>
+    <tbody>
+      <tr><td>初始化版本接口</td><td>401/403、网络失败、版本过低或坏结构</td><td>阻止初始化并在表单中显示错误</td></tr>
+      <tr><td>应用内账号列表同步</td><td>401/403/423</td><td>连接级故障，全局暂停并写入事件</td></tr>
+      <tr><td>应用内单账号 quota</td><td>401/403/423 或 schema 错误</td><td>保存到该账号的运行状态和 <code>last_error</code>，不暂停其他账号</td></tr>
+      <tr><td>单账号 quota</td><td>429、5xx 或网络故障</td><td>沿用额度重试策略</td></tr>
+    </tbody>
+  </table>
+
+  <h2>接口与实现边界</h2>
+  <ul>
+    <li><code>POST /api/setup/complete</code> 成功响应只返回已验证的 <code>version</code>，不再返回带有误导性的 <code>accounts_found</code>。</li>
+    <li>连接探测辅助函数只构建受限 sub2api 客户端并调用 <code>Version</code>。</li>
+    <li>初始化成功后仍调用调度器 <code>Wake</code>，账号同步由既有后台流程完成。</li>
+    <li>应用现有账号抽屉继续作为账号错误详情入口，不新增页面或数据库字段。</li>
+    <li>手动刷新 quota 失败时也保存账号级错误，刷新页面后仍可查看。</li>
+  </ul>
+
+  <h2>测试与验收</h2>
+  <ol>
+    <li>假 sub2api 的版本接口返回成功，而 accounts 和 quota 被设置为失败；初始化仍成功，并断言失败接口调用次数为零。</li>
+    <li>版本接口使用错误 Admin API Key 返回 401；初始化必须失败且不保存设置。</li>
+    <li>版本低于兼容基线或响应结构错误；初始化必须失败。</li>
+    <li>应用内单账号 quota 返回 401；该账号显示“需要处理”及错误详情，调度器不进入全局暂停。</li>
+    <li>账号列表接口返回 401；调度器保持连接级全局暂停行为。</li>
+    <li>GitHub Actions 完成 Go 单测/race、前端检查和生产面板 Playwright，再发布补丁版本。</li>
+  </ol>
+
+  <h2>文档调整</h2>
+  <p>README 将明确：首次设置只验证管理连接与版本；账号列表和 quota 能力在进入应用后同步并按账号检查。兼容要求中的 quota 能力仍是自动激活的必要条件，但不再是完成初始化的前置条件。</p>
+</main>
+</body>
+</html>
