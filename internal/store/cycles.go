@@ -85,14 +85,16 @@ func (s *Store) StartAttempt(ctx context.Context, cycleID string, now, leaseUnti
 }
 
 type AttemptResult struct {
-	Outcome    string
-	HTTPStatus *int
-	ErrorCode  string
-	Message    string
-	Status     string
-	NextAt     *int64
-	AcceptedAt *int64
-	Reason     string
+	Outcome      string
+	HTTPStatus   *int
+	ErrorCode    string
+	Message      string
+	AnswerStatus string
+	AnswerText   string
+	Status       string
+	NextAt       *int64
+	AcceptedAt   *int64
+	Reason       string
 }
 
 func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, endedAt int64, result AttemptResult) error {
@@ -105,9 +107,11 @@ func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, ended
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO attempts (id, cycle_id, attempt_number, started_at, ended_at, outcome, http_status, error_code, message)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, cycle.ID, cycle.AttemptCount, startedAt, endedAt,
-		result.Outcome, result.HTTPStatus, truncate(result.ErrorCode, 80), truncate(result.Message, 500)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO attempts (
+      id, cycle_id, attempt_number, started_at, ended_at, outcome, http_status, error_code, message, answer_status, answer_text
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, cycle.ID, cycle.AttemptCount, startedAt, endedAt,
+		result.Outcome, result.HTTPStatus, truncate(result.ErrorCode, 80), truncate(result.Message, 500),
+		truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE cycles SET status=?, lease_until=NULL, accepted_at=COALESCE(?, accepted_at),
@@ -122,6 +126,13 @@ func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, ended
 	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, updated_at=? WHERE id=?`,
 		accountState, result.NextAt, truncate(result.Message, 500), endedAt, cycle.AccountID); err != nil {
 		return err
+	}
+	if result.AnswerStatus != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
+      SET last_answer_status=?, last_answer_text=?, last_answer_at=?, updated_at=? WHERE id=?`,
+			truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000), endedAt, endedAt, cycle.AccountID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -164,7 +175,8 @@ func (s *Store) ListCycles(ctx context.Context, accountID string, limit int) ([]
 }
 
 func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, cycle_id, attempt_number, started_at, ended_at, outcome, http_status, error_code, message FROM attempts WHERE cycle_id=? ORDER BY attempt_number`, cycleID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, cycle_id, attempt_number, started_at, ended_at, outcome,
+      http_status, error_code, message, answer_status, answer_text FROM attempts WHERE cycle_id=? ORDER BY attempt_number`, cycleID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +185,8 @@ func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, er
 	for rows.Next() {
 		var item Attempt
 		var ended, status sql.NullInt64
-		if err := rows.Scan(&item.ID, &item.CycleID, &item.AttemptNumber, &item.StartedAt, &ended, &item.Outcome, &status, &item.ErrorCode, &item.Message); err != nil {
+		if err := rows.Scan(&item.ID, &item.CycleID, &item.AttemptNumber, &item.StartedAt, &ended, &item.Outcome,
+			&status, &item.ErrorCode, &item.Message, &item.AnswerStatus, &item.AnswerText); err != nil {
 			return nil, err
 		}
 		item.EndedAt = int64Ptr(ended)
@@ -184,4 +197,15 @@ func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, er
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func limitRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }

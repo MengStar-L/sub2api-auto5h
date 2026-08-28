@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MengStar-L/sub2api-auto5h/internal/secure"
 )
@@ -109,6 +111,75 @@ func TestUniqueCycleAndPolicyGeneration(t *testing.T) {
 	}
 	if first.ID != second.ID {
 		t.Fatal("duplicate cycle was created")
+	}
+}
+
+func TestFinishAttemptPersistsAnswerAssessment(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	account := insertInventoryAccount(t, data, eligibleInventoryAccount())
+	if err := data.SetPolicy(ctx, account.ID, Policy{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	account, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Unix()
+	cycle, err := data.EnsureCycle(ctx, account.ID, account.IdentityGeneration, "bootstrap:1", "bootstrap", nil, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := data.StartAttempt(ctx, cycle.ID, started, started+120)
+	if err != nil || !ok {
+		t.Fatalf("claimed=%v err=%v", ok, err)
+	}
+	ended := started + 1
+	if err := data.FinishAttempt(ctx, claimed, started, ended, AttemptResult{
+		Outcome: "accepted", Status: "success_unverified", AnswerStatus: "abnormal", AnswerText: "答案是 29",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.LastAnswerStatus != "abnormal" || updated.LastAnswerText != "答案是 29" || updated.LastAnswerAt == nil || *updated.LastAnswerAt != ended {
+		t.Fatalf("account answer=%#v", updated)
+	}
+	attempts, err := data.ListAttempts(ctx, cycle.ID)
+	if err != nil || len(attempts) != 1 || attempts[0].AnswerStatus != "abnormal" || attempts[0].AnswerText != "答案是 29" {
+		t.Fatalf("attempts=%#v err=%v", attempts, err)
+	}
+
+	failedCycle, err := data.EnsureCycle(ctx, account.ID, account.IdentityGeneration, "reset:2", "reset", nil, ended+1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedClaim, ok, err := data.StartAttempt(ctx, failedCycle.ID, ended+1, ended+121)
+	if err != nil || !ok {
+		t.Fatalf("claimed=%v err=%v", ok, err)
+	}
+	if err := data.FinishAttempt(ctx, failedClaim, ended+1, ended+2, AttemptResult{
+		Outcome: "failed", Status: "attention", Message: "request failed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.LastAnswerStatus != "abnormal" || preserved.LastAnswerText != "答案是 29" || preserved.LastAnswerAt == nil || *preserved.LastAnswerAt != ended {
+		t.Fatalf("preserved answer=%#v", preserved)
+	}
+}
+
+func TestAnswerTextLimitPreservesUTF8(t *testing.T) {
+	value := strings.Repeat("智", 2001)
+	limited := limitRunes(value, 2000)
+	if len([]rune(limited)) != 2000 || !utf8.ValidString(limited) {
+		t.Fatalf("limited runes=%d valid=%v", len([]rune(limited)), utf8.ValidString(limited))
 	}
 }
 

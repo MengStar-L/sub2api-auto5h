@@ -70,6 +70,9 @@ type Account struct {
 	NextActionAt            *int64    `json:"next_action_at,omitempty"`
 	RuntimeState            string    `json:"runtime_state"`
 	LastError               string    `json:"last_error,omitempty"`
+	LastAnswerStatus        string    `json:"last_answer_status"`
+	LastAnswerText          string    `json:"last_answer_text"`
+	LastAnswerAt            *int64    `json:"last_answer_at,omitempty"`
 	LastSeenAt              time.Time `json:"last_seen_at"`
 	Policy                  Policy    `json:"policy"`
 }
@@ -125,6 +128,8 @@ type Attempt struct {
 	HTTPStatus    *int   `json:"http_status,omitempty"`
 	ErrorCode     string `json:"error_code"`
 	Message       string `json:"message"`
+	AnswerStatus  string `json:"answer_status"`
+	AnswerText    string `json:"answer_text"`
 }
 
 type Event struct {

@@ -15,7 +15,8 @@ const accountSelect = `SELECT
   a.expires_at, a.auto_pause_on_expired, a.rate_limit_reset_at, a.temp_unschedulable_until,
   a.temp_unschedulable_reason, a.missing, a.eligible, a.eligibility_reason,
   a.five_reset_at, a.five_used_percent, a.seven_reset_at, a.seven_used_percent, a.quota_fetched_at,
-  a.quota_state, a.next_action_at, a.runtime_state, a.last_error, a.last_seen_at,
+  a.quota_state, a.next_action_at, a.runtime_state, a.last_error,
+  a.last_answer_status, a.last_answer_text, a.last_answer_at, a.last_seen_at,
   COALESCE(p.enabled, 0), COALESCE(p.enable_generation, 0), p.model_override,
   p.grace_override_seconds, p.max_retries_override, p.retry_base_override_seconds
 FROM remote_accounts a LEFT JOIN account_policies p ON p.account_id = a.id`
@@ -26,7 +27,7 @@ type scanner interface {
 
 func scanAccount(row scanner) (Account, error) {
 	var out Account
-	var parent, fiveReset, sevenReset, fetched, nextAction sql.NullInt64
+	var parent, fiveReset, sevenReset, fetched, nextAction, lastAnswerAt sql.NullInt64
 	var fiveUsed, sevenUsed sql.NullFloat64
 	var expires, rateReset, tempUntil sql.NullString
 	var model sql.NullString
@@ -37,7 +38,8 @@ func scanAccount(row scanner) (Account, error) {
 		&out.Name, &out.Email, &out.PlanType, &out.Platform, &out.AccountType, &out.Status, &out.Schedulable, &parent,
 		&expires, &out.AutoPauseOnExpired, &rateReset, &tempUntil, &out.TempUnschedulableReason,
 		&out.Missing, &out.Eligible, &out.EligibilityReason, &fiveReset, &fiveUsed, &sevenReset, &sevenUsed,
-		&fetched, &out.QuotaState, &nextAction, &out.RuntimeState, &out.LastError, &lastSeen,
+		&fetched, &out.QuotaState, &nextAction, &out.RuntimeState, &out.LastError,
+		&out.LastAnswerStatus, &out.LastAnswerText, &lastAnswerAt, &lastSeen,
 		&out.Policy.Enabled, &out.Policy.EnableGeneration, &model, &grace, &retries, &retryBase,
 	)
 	if err != nil {
@@ -50,6 +52,7 @@ func scanAccount(row scanner) (Account, error) {
 	out.SevenUsedPercent = float64Ptr(sevenUsed)
 	out.QuotaFetchedAt = int64Ptr(fetched)
 	out.NextActionAt = int64Ptr(nextAction)
+	out.LastAnswerAt = int64Ptr(lastAnswerAt)
 	out.ExpiresAt = stringValue(expires)
 	out.RateLimitResetAt = stringValue(rateReset)
 	out.TempUnschedulableUntil = stringValue(tempUntil)
@@ -126,6 +129,9 @@ func (s *Store) ReplaceInventory(ctx context.Context, connectionUUID string, inp
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE cycles SET status='identity_replaced', lease_until=NULL, next_attempt_at=NULL, reason='remote OpenAI identity changed', updated_at=? WHERE account_id=? AND status IN ('waiting','retry_wait','dispatching')`, now, id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET last_answer_status='', last_answer_text='', last_answer_at=NULL WHERE id=?`, id); err != nil {
 				return err
 			}
 		}
@@ -273,7 +279,8 @@ func (s *Store) ApplyQuota(ctx context.Context, id string, update QuotaUpdate) (
 		if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET identity_hash=?, identity_generation=identity_generation+1,
         five_reset_at=NULL, five_used_percent=NULL, seven_reset_at=NULL, seven_used_percent=NULL,
         quota_fetched_at=?, quota_state='identity_changed', next_action_at=NULL, runtime_state='identity_changed',
-        last_error='remote OpenAI identity changed; re-enable automation', updated_at=? WHERE id=?`, update.IdentityHash, update.FetchedAt, now, id); err != nil {
+        last_error='remote OpenAI identity changed; re-enable automation',
+        last_answer_status='', last_answer_text='', last_answer_at=NULL, updated_at=? WHERE id=?`, update.IdentityHash, update.FetchedAt, now, id); err != nil {
 			return false, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE account_policies SET enabled=0, enable_generation=enable_generation+1, updated_at=? WHERE account_id=?`, now, id); err != nil {
