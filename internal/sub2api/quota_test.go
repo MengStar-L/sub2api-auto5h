@@ -113,6 +113,57 @@ func TestParseQuotaKnownEmptyAllowsOmittedSlots(t *testing.T) {
 	}
 }
 
+func TestFiveHourStateUsesUsageNotOnlyFutureReset(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	quota := Quota{
+		Allowed: true,
+		FiveHour: &Window{
+			UsedPercent:        0,
+			LimitWindowSeconds: FiveHoursSeconds,
+			ResetAt:            now.Unix() + FiveHoursSeconds,
+		},
+	}
+	if quota.FiveActive(now) || !quota.KnownIdle(now) {
+		t.Fatalf("zero usage should be idle: %#v", quota)
+	}
+
+	quota.FiveHour.UsedPercent = 0.01
+	if !quota.FiveActive(now) || quota.KnownIdle(now) {
+		t.Fatalf("positive usage should be active: %#v", quota)
+	}
+}
+
+func TestKnownIdleRequiresAllowedUnblockedQuota(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	base := Quota{
+		Allowed:  true,
+		FiveHour: &Window{LimitWindowSeconds: FiveHoursSeconds, ResetAt: now.Unix() + FiveHoursSeconds},
+		SevenDay: &Window{UsedPercent: 10, LimitWindowSeconds: SevenDaysSeconds, ResetAt: now.Unix() + SevenDaysSeconds},
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Quota)
+	}{
+		{name: "not allowed", mutate: func(quota *Quota) { quota.Allowed = false }},
+		{name: "limit reached", mutate: func(quota *Quota) { quota.LimitReached = true }},
+		{name: "seven day exhausted", mutate: func(quota *Quota) { quota.SevenDay.UsedPercent = 100 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			quota := base
+			five := *base.FiveHour
+			seven := *base.SevenDay
+			quota.FiveHour = &five
+			quota.SevenDay = &seven
+			test.mutate(&quota)
+			if quota.KnownIdle(now) {
+				t.Fatalf("blocked quota reported idle: %#v", quota)
+			}
+		})
+	}
+}
+
 func TestParseQuotaRejectsMissingRateLimitAndDuplicates(t *testing.T) {
 	for _, payload := range []string{
 		`{"fetched_at":1800000000}`,

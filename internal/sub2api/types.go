@@ -44,7 +44,7 @@ type Quota struct {
 }
 
 func (q Quota) FiveActive(now time.Time) bool {
-	return q.FiveHour != nil && q.FiveHour.ResetAt > now.Unix()
+	return q.FiveHour != nil && q.FiveHour.UsedPercent > 0 && q.FiveHour.ResetAt > now.Unix()
 }
 
 func (q Quota) SevenExhausted(now time.Time) bool {
@@ -52,7 +52,8 @@ func (q Quota) SevenExhausted(now time.Time) bool {
 }
 
 func (q Quota) KnownIdle(now time.Time) bool {
-	return (q.FiveHour == nil || q.FiveHour.ResetAt <= now.Unix()) && q.Allowed && !q.LimitReached && !q.SevenExhausted(now)
+	fiveIdle := q.FiveHour == nil || q.FiveHour.UsedPercent == 0 || q.FiveHour.ResetAt <= now.Unix()
+	return fiveIdle && q.Allowed && !q.LimitReached && !q.SevenExhausted(now)
 }
 
 type TestResult struct {

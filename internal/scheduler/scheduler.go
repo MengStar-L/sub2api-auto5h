@@ -341,7 +341,7 @@ func (s *Scheduler) ProcessAccount(ctx context.Context, id string) error {
 		_, err = s.store.EnsureCycle(ctx, id, account.IdentityGeneration, fmt.Sprintf("reset:%d", quota.FiveHour.ResetAt), "reset", &quota.FiveHour.ResetAt, due)
 		return err
 	}
-	ready := (quota.FiveHour != nil && quota.FiveHour.ResetAt <= now.Unix()) || quota.KnownIdle(now)
+	ready := quota.KnownIdle(now)
 	if !ready {
 		return s.store.SetAccountRuntime(ctx, id, "attention", "额度结构有效，但当前状态不允许启动 5h 窗口", nil)
 	}
@@ -448,7 +448,7 @@ func (s *Scheduler) sendAttempt(ctx context.Context, client Remote, account stor
 	reconcileCtx, cancelReconcile := context.WithTimeout(ctx, time.Duration(settings.RequestTimeoutSeconds)*time.Second)
 	quota, quotaErr := client.Quota(reconcileCtx, account.RemoteID)
 	cancelReconcile()
-	if quotaErr == nil && quota.FiveHour != nil && quota.FiveHour.ResetAt > ended && (claimed.SourceResetAt == nil || quota.FiveHour.ResetAt != *claimed.SourceResetAt) {
+	if quotaErr == nil && quota.FiveActive(time.Unix(ended, 0)) && (claimed.SourceResetAt == nil || quota.FiveHour.ResetAt != *claimed.SourceResetAt) {
 		next := quota.FiveHour.ResetAt + int64(effectiveGrace(account.Policy, settings))
 		accepted := ended
 		if err := s.store.FinishAttempt(ctx, claimed, now, ended, store.AttemptResult{
@@ -532,7 +532,7 @@ func (s *Scheduler) verify(accountID, cycleID string, acceptedAt int64) {
 			continue
 		}
 		quota, err := client.Quota(s.ctx, account.RemoteID)
-		if err != nil || quota.FiveHour == nil || quota.FiveHour.ResetAt <= acceptedAt {
+		if err != nil || !quota.FiveActive(time.Unix(acceptedAt, 0)) {
 			continue
 		}
 		due := quota.FiveHour.ResetAt + int64(effectiveGrace(account.Policy, settings))
@@ -613,7 +613,12 @@ func (s *Scheduler) RefreshQuota(ctx context.Context, accountID string) error {
 	_ = s.store.SetEligibility(ctx, accountID, eligible, map[bool]string{true: "", false: "额度接口返回的套餐不在白名单"}[eligible], plan)
 	next := account.NextActionAt
 	state := account.RuntimeState
-	if quota.FiveActive(s.clock.Now()) {
+	now := s.clock.Now()
+	if account.Policy.Enabled && quota.KnownIdle(now) {
+		value := now.Unix()
+		next = &value
+		state = "due"
+	} else if account.Policy.Enabled && quota.FiveActive(now) {
 		value := quota.FiveHour.ResetAt + int64(effectiveGrace(account.Policy, settings))
 		next = &value
 		state = "waiting"
