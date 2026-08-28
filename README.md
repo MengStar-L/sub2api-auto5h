@@ -25,22 +25,36 @@
 
 ## 安装
 
-从 Release 下载并校验当前架构的归档，或使用安装脚本：
+从 Release 下载并校验当前架构的归档，或运行安装脚本。脚本会询问安装目录和监听端口，直接回车采用 `/opt/sub2apiauto5h` 和 `2555`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/install.sh | sudo sh
 ```
 
-安装位置：
+无 TTY 的自动化安装可通过环境变量指定，两项都可单独省略：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/install.sh |
+  sudo env \
+    SUB2API_AUTO5H_INSTALL_DIR=/srv/sub2apiauto5h \
+    SUB2API_AUTO5H_PORT=3000 \
+    sh
+```
+
+默认安装布局：
 
 | 内容 | 路径 |
 |---|---|
-| 二进制 | `/usr/local/bin/sub2api-auto5h` |
+| 二进制 | `/opt/sub2apiauto5h/sub2api-auto5h` |
+| 卸载脚本 | `/opt/sub2apiauto5h/uninstall.sh` |
 | systemd unit | `/etc/systemd/system/sub2api-auto5h.service` |
-| 环境文件 | `/etc/sub2api-auto5h/sub2api-auto5h.env` |
-| SQLite | `/var/lib/sub2api-auto5h/app.db` |
+| 环境文件 | `/opt/sub2apiauto5h/config/sub2api-auto5h.env` |
+| SQLite | `/opt/sub2apiauto5h/data/app.db` |
+| 升级备份 | `/opt/sub2apiauto5h/backups/` |
 
-服务默认只监听 `127.0.0.1:8090`。查看状态和首次 setup token：
+安装目录必须是专用的安全绝对路径；脚本拒绝 `/`、`/opt`、`/usr` 等宽泛目录、符号链接和非空的新目标目录。端口必须为 `1–65535`。服务始终只绑定 `127.0.0.1:<所选端口>`，不会由安装器直接暴露到公网。
+
+查看状态和首次 setup token：
 
 ```bash
 sudo systemctl status sub2api-auto5h
@@ -54,10 +68,10 @@ Setup token 是一次性 32 字节随机值，有效期 30 分钟。初始化完
 最简单、安全的方式是 SSH 隧道：
 
 ```bash
-ssh -L 8090:127.0.0.1:8090 your-server
+ssh -L 2555:127.0.0.1:2555 your-server
 ```
 
-随后打开 `http://127.0.0.1:8090`。
+随后打开 `http://127.0.0.1:2555`。若安装时选择了其他端口，请同步替换隧道两端和浏览器地址。
 
 如需公网访问，请置于 HTTPS 反向代理之后，并把环境文件中的：
 
@@ -125,23 +139,52 @@ sub2api test 接口没有幂等键，因此网络层无法保证严格 exactly-o
 ```bash
 sudo systemctl restart sub2api-auto5h
 sudo journalctl -u sub2api-auto5h -f
-curl -fsS http://127.0.0.1:8090/healthz
-curl -fsS http://127.0.0.1:8090/readyz
+curl -fsS http://127.0.0.1:2555/healthz
+curl -fsS http://127.0.0.1:2555/readyz
 ```
 
 `healthz` 只表示进程可响应；`readyz` 还验证初始化、数据库与主密钥。sub2api 暂时不可达不会让进程 liveness 失败，相关账号会进入额度重试或全局暂停状态。
 
 ### 备份与升级
 
-安装脚本用于首次安装和升级。升级前它停止服务，并把数据库及 WAL 文件归档到状态目录，然后原子替换二进制。也可以手动停机备份：
+安装脚本同时用于升级。已有新布局安装会把当前目录和端口作为交互默认值；显式选择新目录时会迁移配置、数据库和备份。升级前脚本停止服务，把数据库及 WAL/SHM 归档到安装根目录的 `backups`，再原子替换二进制。
+
+从 `v0.1.0` 的 `/usr/local/bin`、`/etc/sub2api-auto5h`、`/var/lib/sub2api-auto5h` 布局升级时，脚本会保留主密钥和数据库并迁移到所选根目录。只有新服务成功启动后才清理旧项目路径；若目标目录已有内容则停止并要求人工处理冲突。
+
+也可以手动停机备份默认数据目录：
 
 ```bash
 sudo systemctl stop sub2api-auto5h
-sudo tar -C /var/lib/sub2api-auto5h -czf /root/sub2api-auto5h-backup.tar.gz app.db app.db-wal app.db-shm
+sudo tar -C /opt/sub2apiauto5h/data -czf /root/sub2api-auto5h-backup.tar.gz app.db app.db-wal app.db-shm
 sudo systemctl start sub2api-auto5h
 ```
 
 不要在服务运行时只复制 `app.db`，否则可能遗漏 WAL 中的数据。恢复时同时恢复数据库及 WAL/SHM，保持 `sub2api-auto5h:sub2api-auto5h` 所有权和 0600 权限。
+
+### 完全卸载
+
+安装目录内自带与当前布局匹配的卸载器：
+
+```bash
+sudo /opt/sub2apiauto5h/uninstall.sh
+```
+
+也可以直接运行仓库中的版本，它会从 systemd unit 自动识别自定义安装目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/uninstall.sh | sudo sh
+```
+
+脚本会列出删除范围，并要求输入完整确认词 `REMOVE sub2api-auto5h`。自动化卸载必须显式设置：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/uninstall.sh |
+  sudo env SUB2API_AUTO5H_UNINSTALL_CONFIRM=yes sh
+```
+
+**完全卸载不可恢复。** 它会删除 systemd unit、整个安装根目录、环境主密钥、SQLite、所有本地备份，以及专用的 `sub2api-auto5h` 用户和组。需要保留的数据必须提前复制到安装根目录之外。
+
+journald 是系统共享日志，卸载器不会清空整个 journal；该服务的历史日志会按服务器现有的 journald 保留策略过期。
 
 ## 真实账号上线检查
 

@@ -34,6 +34,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check lifecycle scripts
+        run: |
+          sh -n scripts/install.sh scripts/uninstall.sh scripts/lifecycle_test.sh
+          sh scripts/lifecycle_test.sh
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -131,8 +136,8 @@ jobs:
               -ldflags "-s -w -X main.version=$version -X main.commit=$GITHUB_SHA" \
               -o "$stage/sub2api-auto5h" ./cmd/sub2api-auto5h
             cp packaging/sub2api-auto5h.service packaging/sub2api-auto5h.env.example \
-              scripts/install.sh README.md LICENSE SECURITY.md THIRD_PARTY_NOTICES.md "$stage/"
-            chmod 0755 "$stage/sub2api-auto5h" "$stage/install.sh"
+              scripts/install.sh scripts/uninstall.sh README.md LICENSE SECURITY.md THIRD_PARTY_NOTICES.md "$stage/"
+            chmod 0755 "$stage/sub2api-auto5h" "$stage/install.sh" "$stage/uninstall.sh"
             tar -C "$stage" -czf "dist/sub2api-auto5h-linux-$arch.tar.gz" .
             go version -m "$stage/sub2api-auto5h"
           done

@@ -25,8 +25,8 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		Listen: "127.0.0.1:8090",
-		DBPath: "/var/lib/sub2api-auto5h/app.db",
+		Listen: "127.0.0.1:2555",
+		DBPath: "/opt/sub2apiauto5h/data/app.db",
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvListen)); value != "" {
 		cfg.Listen = value
