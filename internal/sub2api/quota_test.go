@@ -3,13 +3,86 @@ package sub2api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestProbeValidatesVersionWithoutLoadingAccounts(t *testing.T) {
+	var unexpected atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/system/version" {
+			unexpected.Add(1)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		writeEnvelope(t, w, map[string]any{"version": MinimumVersion})
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "admin-secret", true, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := client.Probe(context.Background())
+	if err != nil || version != MinimumVersion {
+		t.Fatalf("version=%q err=%v", version, err)
+	}
+	if unexpected.Load() != 0 {
+		t.Fatalf("probe made %d non-version requests", unexpected.Load())
+	}
+}
+
+func TestProbeRejectsInvalidManagementConnection(t *testing.T) {
+	tests := []struct {
+		name  string
+		kind  ErrorKind
+		serve func(http.ResponseWriter)
+	}{
+		{
+			name: "unsupported version",
+			kind: ErrorSchema,
+			serve: func(w http.ResponseWriter) {
+				writeEnvelope(t, w, map[string]any{"version": "0.1.182"})
+			},
+		},
+		{
+			name: "invalid admin key",
+			kind: ErrorAuth,
+			serve: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 401, "message": "invalid admin API key", "data": nil})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/admin/system/version" {
+					http.NotFound(w, r)
+					return
+				}
+				test.serve(w)
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, "admin-secret", true, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Probe(context.Background())
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.Kind != test.kind {
+				t.Fatalf("error=%#v", err)
+			}
+		})
+	}
+}
 
 func TestParseQuotaWindowsByDuration(t *testing.T) {
 	payload := []byte(`{

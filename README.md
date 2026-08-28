@@ -21,7 +21,7 @@
 - OpenAI OAuth 母账号的 `GET /api/v1/admin/openai/accounts/:id/quota` 能力
 - Linux amd64 或 arm64，systemd
 
-版本号只作为最低提示。首次设置会实际探测版本、账号分页和 quota 响应结构；能力或结构不匹配时不会保存连接，也不会发送激活请求。
+首次设置和设置页的连接测试只调用版本接口，用它验证 Admin API Key 与最低兼容版本；不会在连接验证期间读取账号或 quota。初始化完成后，程序在后台同步账号列表，并在应用内按账号检查 quota 能力和展示错误。quota 能力或结构不匹配的账号不会发送激活请求，但不会阻止管理员进入应用。
 
 ## 安装
 
@@ -112,6 +112,8 @@ SUB2API_AUTO5H_COOKIE_SECURE=true
 5. 一个可用的文本模型名称
 
 公网地址必须使用 HTTPS。回环或字面量私网 IP 可以使用 HTTP，但必须显式勾选确认；不支持跳过 TLS 证书验证，也不会跟随 HTTP 重定向，以免泄漏 `x-api-key`。
+
+点击“完成初始化”时只验证 sub2api Admin API Key 和版本，不会读取 OpenAI OAuth 账号额度。进入应用后调度器会异步同步账号；账号页首次打开时可能短暂为空。单个账号的 OAuth 失效、quota 结构错误或额度接口故障会显示在该账号详情中，不会阻止其他账号同步。
 
 ## 调度语义
 

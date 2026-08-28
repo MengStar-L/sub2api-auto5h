@@ -271,7 +271,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_SETTINGS", err.Error())
 		return
 	}
-	if _, _, err := probe(r.Context(), next); err != nil {
+	if _, err := probe(r.Context(), next); err != nil {
 		writeRemoteError(w, err)
 		return
 	}
@@ -316,10 +316,10 @@ func (s *Server) testSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_SETTINGS", err.Error())
 		return
 	}
-	version, accounts, err := probe(r.Context(), settings)
+	version, err := probe(r.Context(), settings)
 	if err != nil {
 		writeRemoteError(w, err)
 		return
 	}
-	writeData(w, http.StatusOK, map[string]any{"version": version, "accounts_found": len(accounts)})
+	writeData(w, http.StatusOK, map[string]any{"version": version})
 }

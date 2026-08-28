@@ -184,7 +184,7 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_SETTINGS", err.Error())
 		return
 	}
-	version, accounts, err := probe(r.Context(), settings)
+	version, err := probe(r.Context(), settings)
 	if err != nil {
 		writeRemoteError(w, err)
 		return
@@ -202,7 +202,7 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 	s.setupToken = ""
 	_ = s.store.AddEvent(r.Context(), "info", "admin", "setup_complete", "", "初始设置已完成", "{}")
 	s.scheduler.Wake()
-	writeData(w, http.StatusCreated, map[string]any{"version": version, "accounts_found": len(accounts)})
+	writeData(w, http.StatusCreated, map[string]any{"version": version})
 }
 
 func settingsFromSetup(request setupRequest) (store.Settings, error) {
@@ -283,29 +283,12 @@ func validateModel(model string) error {
 	return nil
 }
 
-func probe(ctx context.Context, settings store.Settings) (string, []sub2api.Account, error) {
+func probe(ctx context.Context, settings store.Settings) (string, error) {
 	client, err := sub2api.NewClient(settings.BaseURL, settings.APIKey, settings.AllowPrivateHTTP, time.Duration(settings.RequestTimeoutSeconds)*time.Second)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
-	version, accounts, err := client.Probe(ctx)
-	if err != nil {
-		return version, nil, err
-	}
-	probedQuota := false
-	for _, account := range accounts {
-		if account.ParentAccountID == nil {
-			if _, err := client.Quota(ctx, account.ID); err != nil {
-				return version, nil, err
-			}
-			probedQuota = true
-			break
-		}
-	}
-	if !probedQuota {
-		return version, nil, &sub2api.APIError{Kind: sub2api.ErrorSchema, Message: "at least one OpenAI OAuth parent account is required to probe the quota capability"}
-	}
-	return version, accounts, nil
+	return client.Probe(ctx)
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

@@ -300,7 +300,7 @@ func (s *Scheduler) ProcessAccount(ctx context.Context, id string) error {
 		if cycleErr == nil && sub2api.IsTransient(quotaErr) && account.QuotaState == "valid" && now.Unix() >= cycle.DueAt+120 && !futureExhausted(account.SevenResetAt, account.SevenUsedPercent, now) {
 			return s.sendAttempt(ctx, client, account, cycle, settings)
 		}
-		return s.handleQuotaError(ctx, account, cycle, cycleErr, quotaErr, now)
+		return s.recordQuotaError(ctx, account, quotaErr, now)
 	}
 	if delta := math.Abs(float64(quota.FetchedAt - now.Unix())); delta > 120 {
 		message := fmt.Sprintf("sub2api 与本机时钟相差 %.0f 秒", delta)
@@ -460,21 +460,15 @@ func (s *Scheduler) sendAttempt(ctx context.Context, client Remote, account stor
 		_, err := s.store.EnsureCycle(ctx, account.ID, account.IdentityGeneration, fmt.Sprintf("reset:%d", quota.FiveHour.ResetAt), "reset", &quota.FiveHour.ResetAt, next)
 		return err
 	}
-	var reconcileAPIError *sub2api.APIError
 	if quotaErr != nil && !sub2api.IsTransient(quotaErr) {
-		if errors.As(quotaErr, &reconcileAPIError) && (reconcileAPIError.Kind == sub2api.ErrorAuth || reconcileAPIError.Kind == sub2api.ErrorCompliance) {
-			s.handleGlobalError(ctx, quotaErr)
-		}
+		reconcileMessage := "请求结果不确定，且额度协调返回不可重试错误: " + quotaErr.Error()
 		return s.store.FinishAttempt(ctx, claimed, now, ended, store.AttemptResult{
-			Outcome: "attention", HTTPStatus: statusCode, ErrorCode: errorCode, Message: message,
-			Status: "attention", Reason: "请求结果不确定，且额度协调返回不可重试错误: " + quotaErr.Error(),
+			Outcome: "attention", HTTPStatus: statusCode, ErrorCode: errorCode, Message: reconcileMessage,
+			Status: "attention", Reason: reconcileMessage,
 		})
 	}
 	var testAPIError *sub2api.APIError
 	if errors.As(testErr, &testAPIError) && (testAPIError.Kind == sub2api.ErrorAuth || testAPIError.Kind == sub2api.ErrorCompliance || testAPIError.Kind == sub2api.ErrorNotFound || testAPIError.Kind == sub2api.ErrorSchema) {
-		if testAPIError.Kind == sub2api.ErrorAuth || testAPIError.Kind == sub2api.ErrorCompliance {
-			s.handleGlobalError(ctx, testErr)
-		}
 		return s.store.FinishAttempt(ctx, claimed, now, ended, store.AttemptResult{
 			Outcome: "attention", HTTPStatus: statusCode, ErrorCode: errorCode, Message: message,
 			Status: "attention", Reason: "激活接口返回不可重试错误",
@@ -557,10 +551,9 @@ func (s *Scheduler) verify(accountID, cycleID string, acceptedAt int64) {
 	}
 }
 
-func (s *Scheduler) handleQuotaError(ctx context.Context, account store.Account, cycle store.Cycle, cycleErr, quotaErr error, now time.Time) error {
+func (s *Scheduler) recordQuotaError(ctx context.Context, account store.Account, quotaErr error, now time.Time) error {
 	var apiErr *sub2api.APIError
 	if errors.As(quotaErr, &apiErr) && (apiErr.Kind == sub2api.ErrorAuth || apiErr.Kind == sub2api.ErrorCompliance) {
-		s.handleGlobalError(ctx, quotaErr)
 		return s.store.SetAccountRuntime(ctx, account.ID, "paused", quotaErr.Error(), nil)
 	}
 	if sub2api.IsTransient(quotaErr) {
@@ -570,8 +563,6 @@ func (s *Scheduler) handleQuotaError(ctx context.Context, account store.Account,
 	if errors.As(quotaErr, &apiErr) && apiErr.Kind == sub2api.ErrorNotFound {
 		return s.store.SetAccountRuntime(ctx, account.ID, "missing", quotaErr.Error(), nil)
 	}
-	_ = cycle
-	_ = cycleErr
 	return s.store.SetAccountRuntime(ctx, account.ID, "attention", quotaErr.Error(), nil)
 }
 
@@ -609,6 +600,9 @@ func (s *Scheduler) RefreshQuota(ctx context.Context, accountID string) error {
 	}
 	quota, err := client.Quota(ctx, account.RemoteID)
 	if err != nil {
+		if recordErr := s.recordQuotaError(ctx, account, err, s.clock.Now()); recordErr != nil {
+			return recordErr
+		}
 		return err
 	}
 	plan := quota.PlanType

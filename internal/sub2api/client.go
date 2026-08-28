@@ -163,19 +163,15 @@ func versionAtLeast(current, minimum string) bool {
 	return true
 }
 
-func (c *Client) Probe(ctx context.Context) (string, []Account, error) {
+func (c *Client) Probe(ctx context.Context) (string, error) {
 	version, err := c.Version(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if !versionAtLeast(version, MinimumVersion) {
-		return version, nil, &APIError{Kind: ErrorSchema, Message: "sub2api " + version + " is older than required " + MinimumVersion}
+		return version, &APIError{Kind: ErrorSchema, Message: "sub2api " + version + " is older than required " + MinimumVersion}
 	}
-	accounts, err := c.Accounts(ctx)
-	if err != nil {
-		return version, nil, err
-	}
-	return version, accounts, nil
+	return version, nil
 }
 
 func (c *Client) Accounts(ctx context.Context) ([]Account, error) {
