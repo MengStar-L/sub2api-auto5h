@@ -1,8 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const appCommand = [
-  'rm -rf ../.e2e-data',
-  'mkdir -p ../.e2e-data',
+  'rm -rf ../.e2e-data && mkdir -p ../.e2e-data && env',
   'SUB2API_AUTO5H_LISTEN=127.0.0.1:18080',
   'SUB2API_AUTO5H_DB_PATH=../.e2e-data/app.db',
   'SUB2API_AUTO5H_MASTER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
