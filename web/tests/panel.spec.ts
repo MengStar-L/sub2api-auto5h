@@ -34,11 +34,15 @@ async function initialize(page: import('@playwright/test').Page) {
 }
 
 test('initializes, logs in, syncs and enables an account', async ({ page }) => {
+  page.on('console', (message) => console.log(`browser:${message.type()}: ${message.text()}`))
+  page.on('pageerror', (error) => console.log(`browser:error: ${error.message}`))
   await initialize(page)
   await page.getByTitle('同步账号').click()
   await expect(page.getByText('plus@example.com').first()).toBeVisible()
   await page.getByRole('button', { name: /plus@example.com/ }).click()
-  const toggle = page.getByLabel('自动激活')
+  const drawer = page.locator('.drawer')
+  await expect(drawer).toBeVisible()
+  const toggle = drawer.getByLabel('自动激活')
   await toggle.check()
   await page.getByRole('button', { name: '保存' }).click()
   await expect(page.getByText('等待刷新').last()).toBeVisible()
