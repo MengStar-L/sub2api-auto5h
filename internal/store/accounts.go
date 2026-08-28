@@ -112,6 +112,10 @@ func (s *Store) ReplaceInventory(ctx context.Context, connectionUUID string, inp
 		return err
 	}
 	defer tx.Rollback()
+	var directEnabled bool
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT direct_wakeup_enabled FROM settings WHERE id=1), 0)`).Scan(&directEnabled); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET missing=1 WHERE connection_uuid=?`, connectionUUID); err != nil {
 		return err
 	}
@@ -180,12 +184,13 @@ func (s *Store) ReplaceInventory(ctx context.Context, connectionUUID string, inp
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
-      SET runtime_state='pending_check', next_action_at=?, last_error='', updated_at=?
-      WHERE connection_uuid=? AND missing=0 AND eligible=1 AND runtime_state='missing'
-        AND EXISTS (
-          SELECT 1 FROM account_policies p
-          WHERE p.account_id=remote_accounts.id AND p.enabled=1
-        )`, now, now, connectionUUID); err != nil {
+	      SET runtime_state=CASE WHEN ? THEN 'pending_check' ELSE 'direct_disabled' END,
+	          next_action_at=CASE WHEN ? THEN ? ELSE NULL END, last_error='', updated_at=?
+	      WHERE connection_uuid=? AND missing=0 AND eligible=1 AND runtime_state='missing'
+	        AND EXISTS (
+	          SELECT 1 FROM account_policies p
+	          WHERE p.account_id=remote_accounts.id AND p.enabled=1
+	        )`, directEnabled, directEnabled, now, now, connectionUUID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
@@ -249,7 +254,7 @@ func (s *Store) SetPolicy(ctx context.Context, id string, policy Policy) error {
 		generation++
 	}
 	var directEnabled bool
-	if err := tx.QueryRowContext(ctx, `SELECT direct_wakeup_enabled FROM settings WHERE id=1`).Scan(&directEnabled); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT direct_wakeup_enabled FROM settings WHERE id=1), 0)`).Scan(&directEnabled); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE account_policies SET enabled=?, enable_generation=?, model_override=?, grace_override_seconds=?, max_retries_override=?, retry_base_override_seconds=?, updated_at=? WHERE account_id=?`,

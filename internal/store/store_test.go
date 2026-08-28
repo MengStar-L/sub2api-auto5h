@@ -240,7 +240,6 @@ func TestReplaceInventoryRestoresEnabledAccountAfterReappearance(t *testing.T) {
 	}
 	markInventoryAccountMissing(t, data, account.ID)
 
-	before := time.Now().Unix()
 	if err := data.ReplaceInventory(ctx, "conn", []RemoteAccountInput{input}); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +247,7 @@ func TestReplaceInventoryRestoresEnabledAccountAfterReappearance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.Missing || !restored.Policy.Enabled || restored.RuntimeState != "pending_check" || restored.NextActionAt == nil || *restored.NextActionAt < before {
+	if restored.Missing || !restored.Policy.Enabled || restored.RuntimeState != "direct_disabled" || restored.NextActionAt != nil {
 		t.Fatalf("restored account=%#v", restored)
 	}
 }

@@ -38,7 +38,7 @@ func (s *Store) EnsureCycle(ctx context.Context, accountID string, identityGener
 	if err != nil {
 		return Cycle{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET next_action_at=?, runtime_state='waiting', updated_at=? WHERE id=?`, due, now, accountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET next_action_at=?, updated_at=? WHERE id=?`, due, now, accountID); err != nil {
 		return Cycle{}, err
 	}
 	cycle, err := scanCycle(tx.QueryRowContext(ctx, cycleSelect+` WHERE account_id=? AND identity_generation=? AND cycle_key=?`, accountID, identityGeneration, key))
