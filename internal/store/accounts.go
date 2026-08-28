@@ -173,7 +173,7 @@ func (s *Store) ListAccounts(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Account
+	out := make([]Account, 0)
 	for rows.Next() {
 		account, err := scanAccount(rows)
 		if err != nil {
@@ -298,7 +298,7 @@ func (s *Store) ListDueAccountIDs(ctx context.Context, now int64, limit int) ([]
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []string
+	ids := make([]string, 0)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {

@@ -2,12 +2,49 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/MengStar-L/sub2api-auto5h/internal/secure"
 )
+
+func TestEmptyListsMarshalAsArrays(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	values := make([]any, 0, 5)
+	accounts, err := data.ListAccounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	due, err := data.ListDueAccountIDs(ctx, time.Now().Unix(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycles, err := data.ListCycles(ctx, "missing-account", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts, err := data.ListAttempts(ctx, "missing-cycle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := data.ListEvents(ctx, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values = append(values, accounts, due, cycles, attempts, events)
+	for _, value := range values {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != "[]" {
+			t.Fatalf("empty public list encoded as %s", encoded)
+		}
+	}
+}
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()

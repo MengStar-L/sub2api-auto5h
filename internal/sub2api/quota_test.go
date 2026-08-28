@@ -103,6 +103,42 @@ func TestAccountsPaginationAndSSE(t *testing.T) {
 	}
 }
 
+func TestEmptyCollectionsMarshalAsArrays(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/admin/accounts":
+			writeEnvelope(t, w, map[string]any{"items": []Account{}, "total": 0})
+		case "/api/v1/admin/accounts/7/models":
+			writeEnvelope(t, w, []string{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "admin-secret", true, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := client.Accounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := client.Models(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{accounts, models} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != "[]" {
+			t.Fatalf("empty client collection encoded as %s", encoded)
+		}
+	}
+}
+
 func TestSSERequiresTerminalSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

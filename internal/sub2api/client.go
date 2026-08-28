@@ -180,7 +180,7 @@ func (c *Client) Probe(ctx context.Context) (string, []Account, error) {
 
 func (c *Client) Accounts(ctx context.Context) ([]Account, error) {
 	const pageSize = 100
-	var all []Account
+	all := make([]Account, 0)
 	for page := 1; page <= 100; page++ {
 		path := fmt.Sprintf("/api/v1/admin/accounts?platform=openai&type=oauth&page=%d&page_size=%d", page, pageSize)
 		data, _, err := c.request(ctx, http.MethodGet, path, nil)
@@ -237,7 +237,7 @@ func (c *Client) Models(ctx context.Context, accountID int64) ([]string, error) 
 		return nil, &APIError{Kind: ErrorSchema, Message: "invalid models response", Cause: err}
 	}
 	seen := map[string]bool{}
-	var models []string
+	models := make([]string, 0)
 	for _, entry := range raw {
 		var model string
 		switch value := entry.(type) {

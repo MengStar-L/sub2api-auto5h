@@ -152,7 +152,7 @@ func (s *Store) ListCycles(ctx context.Context, accountID string, limit int) ([]
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Cycle
+	out := make([]Cycle, 0)
 	for rows.Next() {
 		cycle, err := scanCycle(rows)
 		if err != nil {
@@ -169,7 +169,7 @@ func (s *Store) ListAttempts(ctx context.Context, cycleID string) ([]Attempt, er
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Attempt
+	out := make([]Attempt, 0)
 	for rows.Next() {
 		var item Attempt
 		var ended, status sql.NullInt64

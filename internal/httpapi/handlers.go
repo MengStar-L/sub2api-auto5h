@@ -109,7 +109,7 @@ func (s *Server) batchPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_BATCH", "select 1-100 accounts")
 		return
 	}
-	var succeeded []string
+	succeeded := make([]string, 0, len(request.IDs))
 	failed := map[string]string{}
 	for _, id := range request.IDs {
 		account, err := s.store.GetAccount(r.Context(), id)

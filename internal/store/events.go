@@ -28,7 +28,7 @@ func (s *Store) ListEvents(ctx context.Context, before int64, limit int) ([]Even
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Event
+	out := make([]Event, 0)
 	for rows.Next() {
 		var item Event
 		var account sql.NullString
