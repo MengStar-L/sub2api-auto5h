@@ -1,0 +1,11 @@
+{
+  "name": "sub2api-auto5h-workspace",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix web run build",
+    "typecheck": "npm --prefix web run typecheck",
+    "test": "npm --prefix web run test",
+    "test:e2e": "npm --prefix web run test:e2e"
+  },
+  "workspaces": ["web"]
+}

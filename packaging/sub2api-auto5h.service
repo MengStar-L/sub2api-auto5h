@@ -1,0 +1,43 @@
+[Unit]
+Description=sub2api-auto5h quota window activator
+Documentation=https://github.com/MengStar-L/sub2api-auto5h
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=sub2api-auto5h
+Group=sub2api-auto5h
+EnvironmentFile=/etc/sub2api-auto5h/sub2api-auto5h.env
+ExecStart=/usr/local/bin/sub2api-auto5h serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0077
+StateDirectory=sub2api-auto5h
+StateDirectoryMode=0700
+ConfigurationDirectory=sub2api-auto5h
+ConfigurationDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

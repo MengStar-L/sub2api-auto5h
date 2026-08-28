@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>sub2api-auto5h 设计说明</title>
+  <style>
+    :root { color-scheme: light; --ink:#20242a; --muted:#64707d; --line:#d9dee5; --accent:#1769aa; --ok:#197149; --warn:#9a6200; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.7 system-ui,"Microsoft YaHei",sans-serif; color:var(--ink); background:#f6f7f9; }
+    main { max-width:980px; margin:0 auto; padding:48px 28px 80px; background:#fff; min-height:100vh; }
+    h1 { margin:0 0 8px; font-size:32px; letter-spacing:0; }
+    h2 { margin:38px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--line); font-size:20px; }
+    h3 { margin:24px 0 8px; font-size:16px; }
+    p,li { max-width:82ch; }
+    .lead { color:var(--muted); font-size:17px; }
+    .facts { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:26px 0; }
+    .fact { border:1px solid var(--line); border-radius:6px; padding:14px; }
+    .fact strong { display:block; color:var(--accent); }
+    code { background:#eef1f4; padding:2px 5px; border-radius:3px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { text-align:left; border-bottom:1px solid var(--line); padding:9px 8px; vertical-align:top; }
+    th { color:var(--muted); font-weight:600; }
+    .note { border-left:3px solid var(--warn); padding:8px 14px; background:#fff8e8; }
+    @media (max-width:700px) { main{padding:28px 18px 56px}.facts{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+<main>
+  <h1>sub2api-auto5h</h1>
+  <p class="lead">连接一个 sub2api 实例，在 Plus、Team、Business 账号的 5 小时窗口重置后，定向发送一次最小文本请求以启动新窗口。</p>
+  <div class="facts">
+    <div class="fact"><strong>独立 sidecar</strong>不修改 sub2api，也不访问其数据库</div>
+    <div class="fact"><strong>单二进制</strong>Go API、调度器、SQLite 与 Vue UI 一体交付</div>
+    <div class="fact"><strong>Linux 发布</strong>systemd 管理，GitHub Actions 构建 amd64/arm64</div>
+  </div>
+
+  <h2>边界</h2>
+  <ul>
+    <li>仅同步 OpenAI OAuth 母账号；账号自动化默认关闭。</li>
+    <li>只有 Plus、Team 与 Business 系列套餐可启用；Pro、Free、Enterprise、未知套餐和影子账号均排除。</li>
+    <li>检测只调用 sub2api 的只读 quota API，绝不调用主动 usage probe。</li>
+    <li>激活只调用指定账号的 admin test API，请求固定为文本 <code>hi</code> 与 <code>mode=default</code>。</li>
+    <li>v1 只支持单管理员、单 sub2api 连接、单进程，容量目标为 100 个启用账号。</li>
+  </ul>
+
+  <h2>组件与数据流</h2>
+  <table>
+    <thead><tr><th>组件</th><th>职责</th><th>依赖</th></tr></thead>
+    <tbody>
+      <tr><td>sub2api client</td><td>认证、分页同步、版本与能力探测、quota 解析、models 和 test SSE</td><td>受限 HTTP client</td></tr>
+      <tr><td>scheduler</td><td>基于持久化周期、租约和预检决定等待、跳过、激活或重试</td><td>store、client、clock</td></tr>
+      <tr><td>store</td><td>SQLite 迁移、设置、账号、策略、周期、尝试、会话和事件</td><td>modernc SQLite</td></tr>
+      <tr><td>web API</td><td>setup、认证、账号操作、设置、事件、健康检查</td><td>store、scheduler</td></tr>
+      <tr><td>Vue SPA</td><td>简体中文的账号表格、详情、事件和设置界面</td><td>同源 JSON API</td></tr>
+    </tbody>
+  </table>
+
+  <h2>额度判定与状态机</h2>
+  <p>解析器按 <code>limit_window_seconds=18000</code> 识别 5h、按 <code>604800</code> 识别 7d，不依赖 primary/secondary 顺序。缺失整个 rate_limit、字段错型、重复或未知窗口均 fail closed；结构有效且不存在 5h 窗口才属于可启动的已知空状态。</p>
+  <ol>
+    <li>启用时读取 quota：有未来 5h 窗口则等待 reset 加 grace；7d 耗尽则等待 7d reset；5h 空或过期则创建 bootstrap 周期。</li>
+    <li>到期时再次读取 quota。若 reset 已前移，判定外部流量已启动窗口并跳过；否则事务标记 dispatching 后调用 test。</li>
+    <li>只接受 SSE <code>test_complete</code> 且 <code>success=true</code>。明确成功后只验证 quota，不再次发送。</li>
+    <li>失败或不确定时先协调 quota，再按指数退避重试；重启先协调未决周期，唯一周期键与租约阻止并发重复。</li>
+  </ol>
+  <p class="note">网络 API 不提供幂等键。因此本系统保证“每周期只接受一个成功结果”，但采用成功优先的至少一次投递；超时且 quota 同时不可用时可能发送多个 <code>hi</code>，所有尝试均记录审计。</p>
+
+  <h2>安全与运维</h2>
+  <ul>
+    <li>首次 setup token 为一次性随机值；管理员密码使用 Argon2id，会话仅保存令牌哈希并带 CSRF、Origin、双 TTL 与登录限流。</li>
+    <li>sub2api key 使用环境主密钥派生的 AES-256-GCM 加密，浏览器和日志永不回显；错误主密钥使服务进入未就绪且停止调度。</li>
+    <li>默认只监听 <code>127.0.0.1:8090</code>；公开访问必须放在 HTTPS 反向代理后。HTTP 仅允许回环/私网并要求显式确认。</li>
+    <li>systemd 使用专用用户、0600 环境文件、StateDirectory、网络与时间同步依赖、沙箱加固和优雅终止。</li>
+  </ul>
+
+  <h2>验收</h2>
+  <ul>
+    <li>健康路径在 reset + 30 秒 + 网络耗时内收到一个成功 test；外部已激活时收到零个。</li>
+    <li>明确 SSE 成功后不重发，重启或并发调度不产生额外周期。</li>
+    <li>不合格、影子、停用、认证或结构异常账号永不发送激活请求。</li>
+    <li>GitHub Actions 完成后端、前端和浏览器测试，并发布可校验的 Linux amd64/arm64 归档。</li>
+  </ul>
+</main>
+</body>
+</html>

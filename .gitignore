@@ -1,0 +1,14 @@
+*.exe
+*.test
+*.out
+coverage/
+/dist/
+/build/
+/.e2e-data/
+node_modules/
+playwright-report/
+test-results/
+data/
+.env
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
