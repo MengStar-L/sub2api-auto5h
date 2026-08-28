@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sub2api-auto5h 官方 Codex 直连唤醒设计</title>
+  <style>
+    :root { color-scheme: light; --ink: #17212b; --muted: #596674; --line: #d7dee5; --blue: #0969a9; --blue-soft: #e9f4fb; --green: #26734d; --green-soft: #eaf6ef; --red: #b42318; --red-soft: #fff0ee; --warn: #8a4b08; --warn-soft: #fff4df; --paper: #fff; --page: #f3f6f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { width: min(1040px, calc(100% - 32px)); margin: 32px auto; padding: 38px 44px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgb(23 33 43 / 8%); }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    h2 { margin: 30px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 19px; }
+    h3 { margin: 20px 0 8px; font-size: 16px; }
+    p { margin: 9px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 5px 0; }
+    code { padding: 2px 5px; border-radius: 4px; background: #eef1f4; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    pre { overflow-x: auto; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: #f7f9fb; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+    th, td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #f5f8fa; }
+    a { color: var(--blue); }
+    .lead { color: var(--muted); font-size: 17px; }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 22px 0; }
+    .fact { padding: 13px 14px; border: 1px solid var(--line); border-radius: 6px; background: #fafcfd; }
+    .fact strong { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+    .flow div { min-height: 116px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--blue-soft); }
+    .note { padding: 12px 14px; border-left: 4px solid var(--green); background: var(--green-soft); }
+    .warning { padding: 12px 14px; border-left: 4px solid var(--warn); background: var(--warn-soft); color: #633705; }
+    .danger { padding: 12px 14px; border-left: 4px solid var(--red); background: var(--red-soft); color: #7a1d15; }
+    @media (max-width: 760px) {
+      main { width: 100%; margin: 0; padding: 24px 18px; border: 0; border-radius: 0; }
+      .facts, .flow { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>官方 Codex 直连唤醒</h1>
+  <p class="lead">让 auto5h 在额度空闲时按需取得单账号 OAuth 凭据，沿用账号代理直接调用 ChatGPT Codex Responses，真实发送糖果题、保存回答，并把额度核验收敛到明确终态。</p>
+
+  <div class="facts">
+    <div class="fact"><strong>凭据策略</strong>单账号按需导出，仅在内存使用，不写 SQLite 或日志</div>
+    <div class="fact"><strong>请求成功</strong>HTTP 2xx 且 SSE 出现 <code>response.completed</code> 或等价成功终态</div>
+    <div class="fact"><strong>额度成功</strong>优先使用直连响应头，缺失时最多补充核验 60 秒</div>
+  </div>
+
+  <h2>问题与根因</h2>
+  <p>sub2api <code>v0.1.183</code> 与当前主线的 OpenAI OAuth 账号测试接口虽然接收 <code>prompt</code>，但 <code>createOpenAITestPayload</code> 仍把上游输入硬编码为 <code>hi</code>。因此 v0.1.5 声称发送的糖果题没有到达 ChatGPT，上版智商判定没有有效输入基础。</p>
+  <p>同一测试实现只转发 <code>response.output_text.delta</code>。如果正文仅存在于完成事件中，sub2api 会丢弃正文但仍发出 <code>test_complete + success=true</code>，导致 auto5h 保存空回复并错误标记“智商不正常”。</p>
+  <p>auto5h v0.1.5 的后置核验在 10、30、60 秒均未看到正用量时直接退出，没有写入终态；账号会一直显示“已请求待验证”。</p>
+  <p class="danger">旧版所有智商结果都必须视为无效；仅修复标签无法让题目真正发送，也无法恢复被 sub2api 丢弃的正文。</p>
+
+  <h2>方案比较与决策</h2>
+  <table>
+    <thead><tr><th>路径</th><th>凭据处理</th><th>优缺点</th><th>决定</th></tr></thead>
+    <tbody>
+      <tr><td>C1 按需导出</td><td>每次只导出当前账号及代理，调用结束即释放引用。</td><td>与 sub2api 保持同步，不新增长期凭据副本；每次多一次管理 API 调用。</td><td><strong>采用</strong></td></tr>
+      <tr><td>C2 加密缓存</td><td>OAuth 凭据用主密钥加密写入 SQLite。</td><td>调用较少，但扩大泄漏面，并可能与 refresh token 轮换失步。</td><td>不采用</td></tr>
+      <tr><td>C3 手工录入</td><td>管理员逐账号录入并维护凭据。</td><td>来源显式，但操作繁琐、易过期且产生双份配置。</td><td>不采用</td></tr>
+    </tbody>
+  </table>
+  <p>参考 <a href="https://github.com/jlcodes99/cockpit-tools/blob/main/src-tauri/src/modules/codex_local_access_foundation.rs">cockpit-tools 官方直连唤醒</a>的 Responses 请求与完整回复提取，同时保留本项目已有的账号预检、周期租约、失败协调和额度后置验证。</p>
+
+  <h2>数据流与组件边界</h2>
+  <div class="flow">
+    <div><strong>1. 调度预检</strong><br>继续读取 sub2api quota；只有 OpenAI OAuth 母账号、策略已启用、5h 空闲且 7d 可用才进入租约。</div>
+    <div><strong>2. 临时认证材料</strong><br>按远端 ID 调用单账号导出，核对身份，必要时由 sub2api 刷新 token，再重新导出一次。</div>
+    <div><strong>3. 官方直连</strong><br>按账号代理请求 ChatGPT Codex Responses，发送固定题目，解析 SSE 与额度响应头。</div>
+    <div><strong>4. 双结果落库</strong><br>分别保存请求终态、额度核验状态和回答判定；绝不保存 token、代理密码或原始 SSE。</div>
+  </div>
+
+  <h3>CredentialProvider</h3>
+  <ul>
+    <li>调用 <code>GET /api/v1/admin/accounts/data?ids=&lt;id&gt;&amp;include_proxies=true</code>；响应必须恰好包含一个账号。</li>
+    <li>账号必须为预期的 <code>platform=openai</code>、<code>type=oauth</code>，并通过远端 ID 对应的本地身份哈希、邮箱或 ChatGPT 身份字段核对。导出响应不包含账号 ID，因此必须坚持单 ID、单结果，禁止批量位置映射。</li>
+    <li>只提取本次调用必需的 access token、过期时间、ChatGPT account ID、可选自定义 User-Agent 和账号代理。refresh token 不由 auto5h 使用。</li>
+    <li>token 临近过期，或第一次官方请求明确返回 401 时，调用 <code>POST /api/v1/admin/openai/accounts/:id/refresh</code>，随后重新导出；每次任务最多刷新一次。</li>
+  </ul>
+
+  <h3>OfficialCodexClient</h3>
+  <ul>
+    <li>固定目标为 <code>https://chatgpt.com/backend-api/codex/responses</code>，拒绝重定向，不允许用户配置任意上游 URL。</li>
+    <li>请求使用 Bearer access token、ChatGPT account ID、配对的官方 Codex User-Agent/Originator、<code>OpenAI-Beta: responses=experimental</code>、<code>store=false</code> 和流式响应。</li>
+    <li>模型沿用全局或账号覆盖配置；不新增推理强度设置。请求只携带固定题目及“只能返回一个阿拉伯数字”的指令。</li>
+    <li>解析 <code>response.output_text.delta</code>、<code>response.output_text.done</code>、完成响应中的 output 文本，以及 <code>response.completed</code>/<code>response.done</code>。正文最多保存 2000 个 Unicode 字符，原始 SSE 上限 1 MiB。</li>
+  </ul>
+
+  <h2>固定题目与回答判定</h2>
+  <pre>在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）
+
+苹果味 桃子味 西瓜味
+圆形 7 9 8
+五角星形 7 6 4
+
+只能返回一个阿拉伯数字，不要解释，不要添加标点或其他内容。</pre>
+  <table>
+    <thead><tr><th>明确成功后的正文</th><th>回答状态</th><th>激活结果</th><th>是否重发</th></tr></thead>
+    <tbody>
+      <tr><td>去除首尾空白后严格等于 <code>21</code></td><td><code>normal</code> / 智商正常</td><td>成功</td><td>否</td></tr>
+      <tr><td>非空且不等于 <code>21</code></td><td><code>abnormal</code> / 智商不正常，保存原文</td><td>成功</td><td>否</td></tr>
+      <tr><td>空正文</td><td><code>no_answer</code> / 无有效回答</td><td>成功</td><td>否</td></tr>
+      <tr><td>v0.1.5 历史结果</td><td><code>legacy_invalid</code> / 旧版结果无效</td><td>保留历史请求结果</td><td>不因迁移重发</td></tr>
+    </tbody>
+  </table>
+  <p class="note">回答质量与激活投递是正交结果。明确完成后，错误答案和空答案都不能触发重复激活。</p>
+
+  <h2>额度证据与状态收口</h2>
+  <p>官方响应头的 primary/secondary 顺序不固定。解析器按 <code>*-window-minutes</code> 识别：300 分钟为 5h，10080 分钟为 7d，并读取同组 <code>used-percent</code> 与 <code>reset-after-seconds</code>。</p>
+  <table>
+    <thead><tr><th>状态</th><th>含义</th><th>下一动作</th></tr></thead>
+    <tbody>
+      <tr><td><code>dispatching</code></td><td>租约已持有，正在导出凭据或请求官方服务。</td><td>等待本次尝试结束。</td></tr>
+      <tr><td><code>verifying</code></td><td>SSE 已明确完成，但官方响应头没有有效 5h 窗口。</td><td>在 10、30、60 秒用 sub2api quota 补充核验。</td></tr>
+      <tr><td><code>verified</code></td><td>官方响应头或后置 quota 已确认 5h 窗口。</td><td>按确认的 reset + 延迟调度。</td></tr>
+      <tr><td><code>accepted_unverified</code></td><td>请求明确成功，但 60 秒内没有额度证据。</td><td>按请求完成时间 + 5h + 延迟保守调度，到期仍预检；这是终态。</td></tr>
+      <tr><td><code>retry_wait</code></td><td>请求结果不确定，且协调未发现额度前移。</td><td>按有限退避重试。</td></tr>
+      <tr><td><code>attention</code></td><td>凭据、代理、身份、权限或响应结构存在不可自动处理错误。</td><td>停止自动发送，等待管理员处理。</td></tr>
+    </tbody>
+  </table>
+  <p class="warning"><code>verifying</code> 最长存在 60 秒。验证协程不论成功、失败、错误还是重启恢复，都必须写入 <code>verified</code>、<code>accepted_unverified</code> 或具体错误状态，禁止静默退出。</p>
+
+  <h2>代理与网络策略</h2>
+  <ul>
+    <li>账号绑定代理时，按需导出并严格复用；支持 <code>http</code>、<code>https</code>、<code>socks5</code>、<code>socks5h</code>。</li>
+    <li>账号未绑定代理时，允许从 auto5h 宿主机直连。</li>
+    <li>代理导出、解析、DNS、认证或连接失败时进入错误状态，绝不回退宿主机直连，避免出口 IP 关联风险。</li>
+    <li>第一版不复制 sub2api 的备用代理故障转移状态机；主代理失败时明确报告。</li>
+    <li>HTTP 客户端限制连接、响应头、总请求与 SSE 读取时间；TLS 校验不可关闭。</li>
+  </ul>
+
+  <h2>错误与重试</h2>
+  <table>
+    <thead><tr><th>信号</th><th>处理</th></tr></thead>
+    <tbody>
+      <tr><td>401</td><td>让 sub2api 刷新一次、重新导出并重试一次；再次 401 进入 <code>attention</code>。</td></tr>
+      <tr><td>429</td><td>解析 5h/7d 响应头并等待相应 reset；缺少可信窗口结构则进入 <code>attention</code>，不盲重试。</td></tr>
+      <tr><td>403、404、坏导出、身份不符、未知 SSE</td><td>作为不可自动恢复错误，禁止 fail-open。</td></tr>
+      <tr><td>连接中断或超时</td><td>先查 quota；出现可信 5h 窗口即推断成功，否则沿用 30/60/120 秒有限重试。</td></tr>
+      <tr><td>明确成功终态</td><td>无论回答或后置 quota 如何，本周期不再投递。</td></tr>
+    </tbody>
+  </table>
+
+  <h2>安全与同意</h2>
+  <ul>
+    <li>设置页新增全局“启用直连唤醒”开关和风险确认；新装与升级默认关闭。关闭时调度器只能读取 quota，不能调用凭据导出或刷新接口。</li>
+    <li>SQLite 不增加 access token、refresh token、ID token 或代理凭据字段。审计事件只保存阶段、状态码、脱敏错误、回答和额度证据来源。</li>
+    <li>所有错误在落库和输出前清除 Bearer token、JWT、refresh token、代理 URL userinfo 和疑似密钥值；HTTP 响应正文只保存经过白名单提取的安全字段。</li>
+    <li>Go 字符串不能保证物理内存清零，因此安全承诺限定为不持久化、缩短对象生命周期、不写日志和不跨任务缓存，不宣称可靠零化。</li>
+    <li>进程级并发租约继续保证同一账号只有一个直连任务；凭据导出结果不可在账号之间共享。</li>
+  </ul>
+
+  <h2>数据库与迁移</h2>
+  <ul>
+    <li>尝试记录增加传输路径、回答来源、额度证据来源和安全终态摘要；摘要不包含原始 SSE。</li>
+    <li>账号最新回答支持 <code>normal</code>、<code>abnormal</code>、<code>no_answer</code>、<code>legacy_invalid</code>。</li>
+    <li>迁移把 v0.1.5 的全部回答状态改为 <code>legacy_invalid</code>，保留回答文本与时间并注明题目未被透传。</li>
+    <li>迁移把超过 60 秒的 <code>success_unverified</code> 改为 <code>accepted_unverified</code>；不因迁移创建新请求。</li>
+    <li>身份代次变化继续清空最新窗口与最新回答状态，要求管理员重新启用该账号。</li>
+  </ul>
+
+  <h2>面板行为</h2>
+  <ul>
+    <li>设置页显示直连总开关、风险确认、凭据不落盘说明和当前可用性。</li>
+    <li>账号表智商列同时显示状态与回答摘要，例如“智商不正常 · 返回 29”；空回答和旧版无效使用独立标签。</li>
+    <li>账号抽屉展示完整回答、请求模型、回答时间、传输路径、额度证据来源和安全终态摘要。</li>
+    <li><code>verifying</code> 显示最长 60 秒倒计时；<code>accepted_unverified</code> 显示“请求成功·额度未确认”，不使用“待验证”措辞。</li>
+    <li>事件页记录凭据获取成功/失败、token 刷新、代理路径、官方请求、响应头验证和 quota 补充验证，不显示任何秘密。</li>
+  </ul>
+
+  <h2>测试与验收</h2>
+  <ul>
+    <li>假 sub2api 覆盖单 ID 导出、零/多账号拒绝、身份错配、token 临期刷新、refresh 失败及敏感信息不落库。</li>
+    <li>假官方上游覆盖四类代理、无代理直连、代理失败不回退、401 刷新、429 窗口、403/404、超时和连接中断。</li>
+    <li>SSE 覆盖分片 delta、done 正文、completed output 回退、错误终态、空正文、超限正文、坏 JSON 和无完成终态。</li>
+    <li>额度响应头覆盖 primary/secondary 对调、300/10080 分钟识别、缺失、重复、坏类型和未知窗口。</li>
+    <li>状态机覆盖立即 verified、60 秒收口、重启恢复、明确成功不重发、并发租约和禁用直连时零凭据调用。</li>
+    <li>前端 Vitest/Playwright 覆盖风险确认、回答摘要、完整详情、旧版迁移状态、桌面 1440×900 与移动 390×844。</li>
+    <li>公开 CI 不使用真实 OAuth 凭据；本机不编译。GitHub Actions 完成类型检查、Vitest、Go fmt/vet/unit/race、生产二进制 Playwright、Linux amd64/arm64 交叉编译。</li>
+  </ul>
+  <p class="note"><strong>健康路径验收：</strong>额度空闲后只导出目标账号一次，使用同一账号代理发送真实糖果题；收到明确完成和有效 5h 响应头后立即进入 verified，保存回答；非 21 或空回答均不重发；缺少额度头时 60 秒内进入明确终态。</p>
+
+  <h2>发布与升级</h2>
+  <p>实现完成并通过主分支云端检查后发布 <code>v0.1.6</code>。安装脚本与 systemd 布局不变，数据库自动迁移。升级后直连总开关保持关闭，管理员需在设置页阅读风险说明并显式开启；此前启用的账号不会在未确认前读取凭据。</p>
+</main>
+</body>
+</html>
