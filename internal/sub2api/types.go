@@ -60,4 +60,5 @@ type TestResult struct {
 	HTTPStatus int
 	Success    bool
 	Message    string
+	Reply      string
 }
