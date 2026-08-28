@@ -45,7 +45,16 @@ test('initializes, logs in, syncs and enables an account', async ({ page }) => {
   const toggle = drawer.getByLabel('自动激活')
   await toggle.check()
   await page.getByRole('button', { name: '保存' }).click()
-  await expect(page.getByText('等待刷新').last()).toBeVisible()
+
+  await expect.poll(() => page.evaluate(async () => {
+    const response = await fetch('/api/accounts')
+    const payload = await response.json() as { data?: Array<{ last_answer_status?: string }> }
+    return payload.data?.[0]?.last_answer_status
+  }), { timeout: 20_000 }).toBe('normal')
+  await page.reload()
+  await expect(page.getByText('智商正常').first()).toBeVisible()
+  await page.getByRole('button', { name: /plus@example.com/ }).click()
+  await expect(page.locator('.drawer .answer-text').first()).toHaveText('21')
 
   const body = await page.locator('body').boundingBox()
   expect(body?.width).toBeLessThanOrEqual(page.viewportSize()!.width)
