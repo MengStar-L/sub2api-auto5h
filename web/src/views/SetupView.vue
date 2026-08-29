@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { CheckCircle2, ShieldCheck } from 'lucide-vue-next'
+import { CheckCircle2 } from 'lucide-vue-next'
 import { api } from '../api'
 
 defineProps<{ available: boolean }>()
@@ -27,7 +27,13 @@ async function submit() {
 <template>
   <main class="setup-page">
     <form class="setup-panel" @submit.prevent="submit">
-      <header class="setup-heading"><ShieldCheck :size="26" /><div><h1>初始化</h1><p>sub2api-auto5h</p></div></header>
+      <header class="setup-heading">
+        <span class="brand-mark" aria-hidden="true">5h</span>
+        <div>
+          <h1>初始化</h1>
+          <p>sub2api-auto5h</p>
+        </div>
+      </header>
       <p v-if="!available" class="form-error">主密钥无效或初始化令牌已过期</p>
       <div class="form-grid">
         <label class="wide">Setup Token<input v-model="token" type="password" autocomplete="off" required /></label>

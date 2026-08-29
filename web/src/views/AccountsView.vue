@@ -6,6 +6,7 @@ import type { Account } from '../types'
 import AccountDrawer from '../components/AccountDrawer.vue'
 import IntelligenceBadge from '../components/IntelligenceBadge.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import WindowRing from '../components/WindowRing.vue'
 
 const accounts = ref<Account[]>([])
 const search = ref('')
@@ -91,6 +92,7 @@ onMounted(load)
       <option value="all">全部状态</option><option value="enabled">已启用</option><option value="eligible">可启用</option>
       <option value="waiting">等待刷新</option><option value="attention">需要处理</option><option value="blocked_7d">7d 已耗尽</option>
     </select>
+    <span v-if="selected.size" class="selection-chip">已选 {{ selected.size }}</span>
     <div class="toolbar-spacer" />
     <button class="secondary command" :disabled="!selected.size" @click="batch(true)"><CheckSquare :size="17" />启用</button>
     <button class="secondary command" :disabled="!selected.size" @click="batch(false)"><Square :size="17" />关闭</button>
@@ -110,7 +112,7 @@ onMounted(load)
           <td class="check-cell"><button class="check-button" :title="selected.has(account.id) ? '取消选择' : '选择账号'" @click.stop="toggleOne(account.id)"><CheckSquare v-if="selected.has(account.id)" :size="17" /><Square v-else :size="17" /></button></td>
           <td><button class="account-link" @click="choose(account)"><strong>{{ account.name || account.email || `账号 ${account.remote_id}` }}</strong><span>{{ account.email || `sub2api #${account.remote_id}` }}</span></button></td>
           <td><span class="plan-label">{{ account.plan_type || '未知' }}</span><small v-if="!account.eligible">{{ account.eligibility_reason }}</small></td>
-          <td><div class="usage-cell"><span>{{ percent(account.five_used_percent) }}</span><progress :value="account.five_used_percent ?? 0" max="100" /></div></td>
+          <td><div class="usage-cell"><WindowRing :value="account.five_used_percent" /><span>{{ percent(account.five_used_percent) }}</span></div></td>
           <td>{{ when(account.five_reset_at) }}</td><td>{{ when(account.next_action_at) }}</td>
           <td><div class="assessment-cell"><IntelligenceBadge :status="account.last_answer_status" /><small v-if="answerSummary(account)">{{ answerSummary(account) }}</small></div></td>
           <td><StatusBadge :state="account.runtime_state" /></td>

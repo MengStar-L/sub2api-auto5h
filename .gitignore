@@ -6,6 +6,7 @@ coverage/
 /build/
 /.e2e-data/
 /.cloud-diagnostics/
+/.claude/
 node_modules/
 playwright-report/
 test-results/

@@ -27,19 +27,20 @@
 
 ## 安装
 
-从 Release 下载并校验当前架构的归档，或运行安装脚本。脚本会询问安装目录和监听端口，直接回车采用 `/opt/sub2apiauto5h` 和 `2555`：
+从 GitHub Release 下载并校验当前架构的归档，或运行安装脚本。`curl | sh` 安装的是最新 Release 二进制，不是 `main` 分支源码。脚本会询问安装目录和监听端口，直接回车采用 `/opt/sub2apiauto5h` 和 `2555`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/install.sh | sudo sh
 ```
 
-无 TTY 的自动化安装可通过环境变量指定，两项都可单独省略：
+无 TTY 的自动化安装可通过环境变量指定，目录和端口都可单独省略。`SUB2API_AUTO5H_VERSION` 可钉死 Release 标签，避免安装器再请求 GitHub 的 `latest` 接口：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/install.sh |
   sudo env \
     SUB2API_AUTO5H_INSTALL_DIR=/srv/sub2apiauto5h \
     SUB2API_AUTO5H_PORT=3000 \
+    SUB2API_AUTO5H_VERSION=v0.1.6 \
     sh
 ```
 
@@ -213,7 +214,7 @@ sudo systemctl start sub2api-auto5h
 sudo /opt/sub2apiauto5h/uninstall.sh
 ```
 
-也可以直接运行仓库中的版本，它会从 systemd unit 自动识别自定义安装目录：
+也可以直接运行仓库中的版本，它会从 systemd unit 自动识别自定义安装目录。同样，管道安装的是 `main` 上的卸载脚本，删除的是本机已安装的目录和数据：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MengStar-L/sub2api-auto5h/main/scripts/uninstall.sh | sudo sh

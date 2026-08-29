@@ -5,6 +5,7 @@ import { api } from '../api'
 import type { Account, Attempt, Cycle } from '../types'
 import IntelligenceBadge from './IntelligenceBadge.vue'
 import StatusBadge from './StatusBadge.vue'
+import WindowRing from './WindowRing.vue'
 
 const props = defineProps<{ account: Account }>()
 const emit = defineEmits<{ close: []; updated: [] }>()
@@ -27,6 +28,7 @@ const verificationRemaining = computed(() => Math.max(0, (props.account.verifica
 
 function when(value?: number) { return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value * 1000)) : '—' }
 function nullable(value: number | null) { return value === null || Number.isNaN(value) ? null : value }
+function percent(value?: number) { return value == null ? '未知' : `${Math.round(value)}%` }
 
 async function loadHistory() {
   cycles.value = await api<Cycle[]>(`/api/accounts/${props.account.id}/cycles`)
@@ -90,7 +92,15 @@ onBeforeUnmount(() => window.clearInterval(timer))
           <p v-if="error" class="form-error">{{ error }}</p>
           <div class="action-row"><button class="primary command" :disabled="busy" @click="save"><Save :size="17" />保存</button><button class="secondary command" :disabled="busy" @click="refreshQuota"><RefreshCw :size="17" />刷新额度</button><button v-if="canRun" class="warning command" :disabled="busy" @click="run"><Play :size="17" />立即执行</button></div>
         </section>
-        <section class="drawer-section"><h2>额度</h2><dl class="quota-list"><div><dt>5h 使用</dt><dd>{{ account.five_used_percent == null ? '未知' : `${Math.round(account.five_used_percent)}%` }}</dd></div><div><dt>5h 重置</dt><dd>{{ when(account.five_reset_at) }}</dd></div><div><dt>7d 使用</dt><dd>{{ account.seven_used_percent == null ? '未知' : `${Math.round(account.seven_used_percent)}%` }}</dd></div><div><dt>7d 重置</dt><dd>{{ when(account.seven_reset_at) }}</dd></div></dl></section>
+        <section class="drawer-section">
+          <h2>额度</h2>
+          <dl class="quota-list">
+            <div><dt>5h 使用</dt><dd><span class="usage-cell"><WindowRing :value="account.five_used_percent" :size="28" /><span>{{ percent(account.five_used_percent) }}</span></span></dd></div>
+            <div><dt>5h 重置</dt><dd>{{ when(account.five_reset_at) }}</dd></div>
+            <div><dt>7d 使用</dt><dd><span class="usage-cell"><WindowRing :value="account.seven_used_percent" :size="28" /><span>{{ percent(account.seven_used_percent) }}</span></span></dd></div>
+            <div><dt>7d 重置</dt><dd>{{ when(account.seven_reset_at) }}</dd></div>
+          </dl>
+        </section>
         <section class="drawer-section">
           <h2>智商检测</h2>
           <template v-if="account.last_answer_status">

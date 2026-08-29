@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import { Activity, LogOut, RefreshCw, Settings, Users } from 'lucide-vue-next'
+import { Activity, LogOut, Settings, Users } from 'lucide-vue-next'
 import { api } from './api'
 import LoginView from './views/LoginView.vue'
 import SetupView from './views/SetupView.vue'
@@ -15,6 +15,11 @@ const route = useRoute()
 let poll: number | undefined
 
 const pageTitle = computed(() => ({ '/accounts': '账号', '/events': '事件', '/settings': '设置' }[route.path] ?? '账号'))
+const pageHint = computed(() => ({
+  '/accounts': '5 小时窗口与自动唤醒',
+  '/events': '最近 90 天的调度与操作记录',
+  '/settings': '连接、调度与直连风险确认',
+}[route.path] ?? ''))
 
 async function bootstrap() {
   loading.value = true
@@ -53,12 +58,18 @@ onBeforeUnmount(() => window.clearInterval(poll))
 </script>
 
 <template>
-  <div v-if="loading" class="center-state"><RefreshCw class="spin" :size="22" /><span>正在加载</span></div>
+  <div v-if="loading" class="center-state">
+    <span class="loader-ring" aria-hidden="true" />
+    <span>正在加载</span>
+  </div>
   <SetupView v-else-if="!setupComplete" :available="setupAvailable" @complete="bootstrap" />
   <LoginView v-else-if="!authenticated" @authenticated="bootstrap" />
   <div v-else class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">5h</span><span>sub2api-auto5h</span></div>
+      <div class="brand">
+        <span class="brand-mark">5h</span>
+        <span class="brand-copy"><strong>sub2api-auto5h</strong><small>额度窗口调度</small></span>
+      </div>
       <nav aria-label="主导航">
         <RouterLink to="/accounts" aria-label="账号"><Users :size="18" /><span>账号</span></RouterLink>
         <RouterLink to="/events" aria-label="事件"><Activity :size="18" /><span>事件</span></RouterLink>
@@ -68,10 +79,20 @@ onBeforeUnmount(() => window.clearInterval(poll))
     </aside>
     <main class="main-content">
       <header class="topbar">
-        <div><h1>{{ pageTitle }}</h1><p v-if="status.global_pause" class="global-warning">{{ status.pause_reason }}</p></div>
+        <div>
+          <h1>{{ pageTitle }}</h1>
+          <p v-if="status.global_pause" class="global-warning">{{ status.pause_reason }}</p>
+          <p v-else-if="pageHint" class="muted-copy">{{ pageHint }}</p>
+        </div>
         <span class="worker-state"><i :class="status.global_pause ? 'dot danger' : 'dot ok'" />{{ status.global_pause ? '调度已暂停' : `${status.active_workers} 个任务运行中` }}</span>
       </header>
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <Transition name="page" mode="out-in">
+          <div :key="route.path" class="page-frame">
+            <component :is="Component" />
+          </div>
+        </Transition>
+      </RouterView>
     </main>
   </div>
 </template>
