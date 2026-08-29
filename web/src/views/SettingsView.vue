@@ -26,6 +26,22 @@ async function load() {
 }
 async function test() { await submit('/api/settings/test', '连接验证通过', false) }
 async function save() { await submit('/api/settings', '设置已保存', true) }
+function settingsPayload() {
+  return {
+    base_url: form.base_url,
+    api_key: form.api_key,
+    global_model: form.global_model,
+    allow_private_http: form.allow_private_http,
+    sync_interval_seconds: form.sync_interval_seconds,
+    reset_grace_seconds: form.reset_grace_seconds,
+    max_retries: form.max_retries,
+    retry_base_seconds: form.retry_base_seconds,
+    request_timeout_seconds: form.request_timeout_seconds,
+    max_concurrency: form.max_concurrency,
+    direct_wakeup_enabled: form.direct_wakeup_enabled,
+    direct_wakeup_risk_acknowledged: riskAcknowledged.value,
+  }
+}
 async function changePassword() {
   busy.value = true; error.value = ''; message.value = ''
   try {
@@ -37,7 +53,7 @@ async function changePassword() {
 async function submit(path: string, success: string, persist: boolean) {
   busy.value = true; error.value = ''; message.value = ''
   try {
-    const result = await api<Record<string, unknown>>(path, { method: persist ? 'PUT' : 'POST', body: JSON.stringify({ ...form, direct_wakeup_risk_acknowledged: riskAcknowledged.value }) })
+    const result = await api<Record<string, unknown>>(path, { method: persist ? 'PUT' : 'POST', body: JSON.stringify(settingsPayload()) })
     message.value = persist ? success : `${success} · sub2api ${String(result.version ?? '')}`
     if (persist) { form.api_key = ''; configured.value = true; originalDirectWakeup.value = form.direct_wakeup_enabled; riskAcknowledged.value = false }
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '操作失败' }

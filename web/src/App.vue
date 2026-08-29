@@ -60,9 +60,9 @@ onBeforeUnmount(() => window.clearInterval(poll))
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">5h</span><span>sub2api-auto5h</span></div>
       <nav aria-label="主导航">
-        <RouterLink to="/accounts"><Users :size="18" /><span>账号</span></RouterLink>
-        <RouterLink to="/events"><Activity :size="18" /><span>事件</span></RouterLink>
-        <RouterLink to="/settings"><Settings :size="18" /><span>设置</span></RouterLink>
+        <RouterLink to="/accounts" aria-label="账号"><Users :size="18" /><span>账号</span></RouterLink>
+        <RouterLink to="/events" aria-label="事件"><Activity :size="18" /><span>事件</span></RouterLink>
+        <RouterLink to="/settings" aria-label="设置"><Settings :size="18" /><span>设置</span></RouterLink>
       </nav>
       <button class="icon-text ghost logout" type="button" title="退出登录" @click="logout"><LogOut :size="18" /><span>退出</span></button>
     </aside>
