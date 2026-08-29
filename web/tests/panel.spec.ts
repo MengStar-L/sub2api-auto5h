@@ -56,6 +56,7 @@ test('initializes, logs in, syncs and enables an account', async ({ page, reques
     await expect.poll(() => fixtureStatus(request)).toMatchObject({ export_count: 0, refresh_count: 0, codex_request_count: 0 })
   }
   await page.getByRole('link', { name: '设置' }).click()
+  await expect(page.getByText('已配置密钥')).toBeVisible()
   const directToggle = page.getByLabel('启用官方 Codex 直连唤醒')
   if (!await directToggle.isChecked()) {
     await directToggle.check()

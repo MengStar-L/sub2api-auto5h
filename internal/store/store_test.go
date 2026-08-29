@@ -239,6 +239,10 @@ func TestFinishAttemptPersistsAnswerAssessment(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("claimed=%v err=%v", ok, err)
 	}
+	dispatching, err := data.GetAccount(ctx, account.ID)
+	if err != nil || dispatching.RuntimeState != "dispatching" || dispatching.NextActionAt != nil {
+		t.Fatalf("dispatching account=%#v err=%v", dispatching, err)
+	}
 	ended := started + 1
 	if err := data.FinishAttempt(ctx, claimed, started, ended, AttemptResult{
 		Outcome: "accepted", Status: "verifying", AnswerStatus: "abnormal", AnswerText: "答案是 29",
@@ -283,6 +287,55 @@ func TestFinishAttemptPersistsAnswerAssessment(t *testing.T) {
 	}
 	if preserved.LastAnswerStatus != "abnormal" || preserved.LastAnswerText != "答案是 29" || preserved.LastAnswerAt == nil || *preserved.LastAnswerAt != ended {
 		t.Fatalf("preserved answer=%#v", preserved)
+	}
+}
+
+func TestPolicyDisableWinsOverInFlightAttempt(t *testing.T) {
+	data := openTestStore(t)
+	ctx := context.Background()
+	account := insertInventoryAccount(t, data, eligibleInventoryAccount())
+	if err := data.SetPolicy(ctx, account.ID, Policy{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	account, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Unix()
+	cycle, err := data.EnsureCycle(ctx, account.ID, account.IdentityGeneration, "bootstrap:1", "bootstrap", nil, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := data.StartAttempt(ctx, cycle.ID, started, started+120)
+	if err != nil || !ok {
+		t.Fatalf("claimed=%v err=%v", ok, err)
+	}
+	if err := data.SetPolicy(ctx, account.ID, Policy{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	ended := started + 1
+	deadline := ended + 60
+	if err := data.FinishAttempt(ctx, claimed, started, ended, AttemptResult{
+		Outcome: "accepted", Status: "verifying", AnswerStatus: "normal", AnswerText: "21",
+		RequestModel: "gpt-text", TransportPath: "direct", AnswerSource: "official_codex_sse",
+		VerificationDeadlineAt: &deadline,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := data.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Policy.Enabled || updated.RuntimeState != "disabled" || updated.NextActionAt != nil || updated.VerificationDeadlineAt != nil {
+		t.Fatalf("disabled account was overwritten=%#v", updated)
+	}
+	if updated.LastAnswerStatus != "normal" || updated.LastAnswerText != "21" {
+		t.Fatalf("completed request result was not retained=%#v", updated)
+	}
+	cycles, err := data.ListCycles(ctx, account.ID, 10)
+	if err != nil || len(cycles) != 1 || cycles[0].Status != "verifying" {
+		t.Fatalf("cycles=%#v err=%v", cycles, err)
 	}
 }
 

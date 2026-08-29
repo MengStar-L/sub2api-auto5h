@@ -81,6 +81,17 @@ func (s *Store) StartAttempt(ctx context.Context, cycleID string, now, leaseUnti
 	if err != nil {
 		return Cycle{}, false, err
 	}
+	accountResult, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state='dispatching', next_action_at=NULL,
+      last_error='', verification_deadline_at=NULL, updated_at=? WHERE id=? AND identity_generation=? AND EXISTS (
+        SELECT 1 FROM account_policies WHERE account_id=? AND enabled=1
+      )`, now, cycle.AccountID, cycle.IdentityGeneration, cycle.AccountID)
+	if err != nil {
+		return Cycle{}, false, err
+	}
+	accountRows, _ := accountResult.RowsAffected()
+	if accountRows != 1 {
+		return Cycle{}, false, nil
+	}
 	return cycle, true, tx.Commit()
 }
 
@@ -133,17 +144,21 @@ func (s *Store) FinishAttempt(ctx context.Context, cycle Cycle, startedAt, ended
 	if result.AccountState != "" {
 		accountState = result.AccountState
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, verification_deadline_at=?, updated_at=? WHERE id=?`,
-		accountState, result.NextAt, truncate(result.Message, 500), result.VerificationDeadlineAt, endedAt, cycle.AccountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts SET runtime_state=?, next_action_at=?, last_error=?, verification_deadline_at=?, updated_at=?
+      WHERE id=? AND identity_generation=? AND EXISTS (
+        SELECT 1 FROM account_policies WHERE account_id=? AND enabled=1
+      )`, accountState, result.NextAt, truncate(result.Message, 500), result.VerificationDeadlineAt, endedAt,
+		cycle.AccountID, cycle.IdentityGeneration, cycle.AccountID); err != nil {
 		return err
 	}
 	if result.AnswerStatus != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE remote_accounts
       SET last_answer_status=?, last_answer_text=?, last_answer_at=?, last_request_model=?,
           last_transport_path=?, last_answer_source=?, last_quota_evidence=?, last_terminal_summary=?, updated_at=?
-      WHERE id=?`, truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000), endedAt,
+      WHERE id=? AND identity_generation=?`, truncate(result.AnswerStatus, 20), limitRunes(result.AnswerText, 2000), endedAt,
 			truncate(result.RequestModel, 128), truncate(result.TransportPath, 32), truncate(result.AnswerSource, 40),
-			truncate(result.QuotaEvidence, 40), truncate(result.TerminalSummary, 500), endedAt, cycle.AccountID); err != nil {
+			truncate(result.QuotaEvidence, 40), truncate(result.TerminalSummary, 500), endedAt, cycle.AccountID,
+			cycle.IdentityGeneration); err != nil {
 			return err
 		}
 	}
