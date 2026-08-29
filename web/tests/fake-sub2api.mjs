@@ -3,6 +3,9 @@ import http from 'node:http'
 const now = () => Math.floor(Date.now() / 1000)
 let activated = false
 let activatedAt = 0
+let exportCount = 0
+let refreshCount = 0
+let codexRequestCount = 0
 const account = {
   id: 7,
   name: 'plus@example.com',
@@ -29,6 +32,7 @@ async function readJSON(request) {
 
 const server = http.createServer(async (request, response) => {
   if (request.url === '/health') return send(response, { status: 'ok' })
+  if (request.url === '/test-status') return send(response, { export_count: exportCount, refresh_count: refreshCount, codex_request_count: codexRequestCount })
   if (request.headers['x-api-key'] !== 'e2e-admin-key') return send(response, null, 401)
   if (request.url === '/api/v1/admin/system/version') return send(response, { version: '0.1.183' })
   if (request.url?.startsWith('/api/v1/admin/accounts?')) return send(response, { items: [account], total: 1 })
@@ -46,6 +50,7 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.url === '/api/v1/admin/accounts/7/models') return send(response, [{ id: 'gpt-text-e2e' }])
   if (request.url === '/api/v1/admin/accounts/data?ids=7&include_proxies=true') {
+    exportCount++
     return send(response, {
       accounts: [{
         platform: 'openai', type: 'oauth', proxy_key: null, extra: {},
@@ -57,7 +62,10 @@ const server = http.createServer(async (request, response) => {
       proxies: [],
     })
   }
-  if (request.url === '/api/v1/admin/openai/accounts/7/refresh' && request.method === 'POST') return send(response, {})
+  if (request.url === '/api/v1/admin/openai/accounts/7/refresh' && request.method === 'POST') {
+    refreshCount++
+    return send(response, {})
+  }
   send(response, null, 404)
 })
 
@@ -68,6 +76,7 @@ const codexServer = http.createServer(async (request, response) => {
     return
   }
   if (request.url === '/backend-api/codex/responses' && request.method === 'POST') {
+    codexRequestCount++
     const body = await readJSON(request)
     const prompt = body.input?.[0]?.content?.[0]?.text
     if (request.headers.authorization !== 'Bearer e2e-access-token' || request.headers['chatgpt-account-id'] !== 'workspace-plus-7' ||

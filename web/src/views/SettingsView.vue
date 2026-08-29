@@ -73,6 +73,6 @@ onMounted(load)
     </section>
     <section class="settings-band"><header><h2>管理员密码</h2></header><div class="form-grid"><label>用户名<input v-model="password.username" autocomplete="username" /></label><label>当前密码<input v-model="password.current_password" type="password" autocomplete="current-password" /></label><label class="wide">新密码<input v-model="password.new_password" type="password" minlength="12" maxlength="128" autocomplete="new-password" /></label></div><button class="secondary command" type="button" :disabled="busy || !password.current_password || !password.new_password" @click="changePassword">更新密码</button></section>
     <p v-if="error" class="inline-alert">{{ error }}</p><p v-if="message" class="success-alert">{{ message }}</p>
-    <div class="action-row"><button class="secondary command" type="button" :disabled="busy" @click="test"><CheckCircle2 :size="17" />测试连接</button><button class="primary command" type="submit" :disabled="busy"><Save :size="17" />保存设置</button></div>
+    <div class="action-row"><button class="secondary command" type="button" :disabled="busy" @click="test"><CheckCircle2 :size="17" />测试连接</button><button class="primary command" type="submit" :disabled="busy || (form.direct_wakeup_enabled && !originalDirectWakeup && !riskAcknowledged)"><Save :size="17" />保存设置</button></div>
   </form>
 </template>
