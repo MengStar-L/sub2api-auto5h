@@ -12,4 +12,9 @@ describe('StatusBadge', () => {
     const wrapper = mount(StatusBadge, { props: { state: 'future_state' } })
     expect(wrapper.text()).toContain('future_state')
   })
+
+  it('renders verification and terminal unverified states distinctly', () => {
+    expect(mount(StatusBadge, { props: { state: 'verifying' } }).text()).toContain('额度核验中')
+    expect(mount(StatusBadge, { props: { state: 'accepted_unverified' } }).text()).toContain('请求成功·额度未确认')
+  })
 })

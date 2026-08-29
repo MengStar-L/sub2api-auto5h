@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MengStar-L/sub2api-auto5h/internal/codex"
 	"github.com/MengStar-L/sub2api-auto5h/internal/secure"
 	"github.com/MengStar-L/sub2api-auto5h/internal/store"
 	"github.com/MengStar-L/sub2api-auto5h/internal/sub2api"
@@ -35,8 +36,16 @@ func (*errorRemote) Models(context.Context, int64) ([]string, error) {
 	return []string{}, nil
 }
 
-func (*errorRemote) TestAccount(context.Context, int64, string) (sub2api.TestResult, error) {
-	return sub2api.TestResult{}, nil
+func (*errorRemote) ActivationMaterial(context.Context, int64, string, string) (sub2api.ActivationMaterial, error) {
+	return sub2api.ActivationMaterial{AccessToken: "token", ChatGPTID: "workspace"}, nil
+}
+
+func (*errorRemote) RefreshAccessToken(context.Context, int64) error { return nil }
+
+type successfulActivator struct{}
+
+func (successfulActivator) Activate(context.Context, codex.Request) (codex.Result, error) {
+	return codex.Result{HTTPStatus: 200, Reply: "21", Terminal: "response.completed", TransportPath: "direct"}, nil
 }
 
 func TestQuotaAuthFailurePausesOnlyTheAccount(t *testing.T) {
@@ -93,7 +102,11 @@ func TestInventoryAuthFailureStillPausesTheConnection(t *testing.T) {
 
 func schedulerWithRemote(data *store.Store, remote Remote) *Scheduler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(data, func(store.Settings) (Remote, error) { return remote, nil }, logger)
+	activator, ok := remote.(Activator)
+	if !ok {
+		activator = successfulActivator{}
+	}
+	return newWithActivator(data, func(store.Settings) (Remote, error) { return remote, nil }, activator, logger)
 }
 
 func schedulerTestStore(t *testing.T) (*store.Store, store.Account) {
@@ -115,6 +128,7 @@ func schedulerTestStore(t *testing.T) (*store.Store, store.Account) {
 		ConnectionUUID: "connection", BaseURL: "https://example.com", APIKey: "admin-secret", GlobalModel: "gpt-text",
 		SyncIntervalSeconds: 300, ResetGraceSeconds: 30, MaxRetries: 3, RetryBaseSeconds: 30,
 		RequestTimeoutSeconds: 90, MaxConcurrency: 4,
+		DirectWakeupEnabled: true,
 	}
 	if err := data.CompleteSetup(ctx, "hash", "admin", "password-hash", settings); err != nil {
 		t.Fatal(err)

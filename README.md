@@ -2,7 +2,7 @@
 
 一个独立的 Go sidecar：连接 [sub2api](https://github.com/Wei-Shaw/sub2api)，被动检测 GPT Plus、Team、Business 账号的 5 小时额度窗口，并在窗口重置后向指定账号发送一次最小文本请求，启动新的 5 小时计时。
 
-它不修改 sub2api、不访问 sub2api 数据库，也不会调用会主动探测用量的 `usage?source=active&force=true`。检测只使用只读 quota 接口；激活只使用管理员的精确账号 test 接口。
+它不修改 sub2api、不访问 sub2api 数据库，也不会调用会主动探测用量的 `usage?source=active&force=true`。检测只使用只读 quota 接口；激活时按需导出单个目标账号的临时 OAuth/代理材料，直接调用固定的 ChatGPT Codex Responses 官方端点。
 
 ## 功能
 
@@ -11,6 +11,8 @@
 - 仅允许 Plus、Team 与 Business 系列，排除 Pro、Free、Enterprise、未知套餐和影子账号
 - 每账号可覆盖文本模型、刷新后延迟、重试次数与退避基数
 - 到期预检、外部激活跳过、7d 耗尽阻塞、崩溃恢复、周期去重和完整尝试审计
+- 官方 Codex 直连全局默认关闭；启用前必须在设置页确认风险
+- 账号代理严格复用，支持 HTTP、HTTPS、SOCKS5、SOCKS5H，失败时不回退直连
 - 单管理员登录、Argon2id、CSRF、登录限流与加密保存的 sub2api Admin API Key
 - systemd 管理；GitHub Actions 发布 Linux amd64/arm64 归档和 SHA256 校验和
 
@@ -133,22 +135,36 @@ quota 的 `primary_window` 和 `secondary_window` 顺序不固定。程序严格
 
 到期时会再次读取 quota。只有 5h 用量大于 0% 且 reset 已前移，才说明其他流量已经启动新窗口；本周期记录“外部已启动”且发送零次。单独出现“查询时间 + 5h”的未来 reset 不再视为已启动。
 
-需要激活时调用：
+通过预检并取得周期租约后，程序只导出当前账号：
 
 ```http
-POST /api/v1/admin/accounts/:id/test
-Content-Type: application/json
-
-{"model_id":"<配置文本模型>","prompt":"<固定糖果题，并要求只返回一个阿拉伯数字>","mode":"default"}
+GET /api/v1/admin/accounts/data?ids=<id>&include_proxies=true
 ```
 
-只有 SSE 终态 `{"type":"test_complete","success":true}` 表示明确成功。程序拼接 `content.text` 作为模型回复：去除首尾空白后严格等于 `21` 标记“智商正常”，其他数字、说明文字或空回复标记“智商不正常”。答错仍是一次明确成功的激活请求，不会重试；面板保存并展示最多 2000 个字符的模型文本，不保存完整 SSE。
+access token 临近过期或首次请求明确返回 401 时，仅让 sub2api 刷新一次，再重新导出：
 
-成功后在 10、30、60 秒进行只读验证。只有 5h 用量大于 0% 才表示额度窗口已验证；如果仍为 0%，状态保持“已请求待验证”，按请求时间推算 5h 后的下一轮预检，明确成功不会在同一周期重发。
+```http
+POST /api/v1/admin/openai/accounts/<id>/refresh
+```
+
+随后按账号代理（未配置代理时从宿主机直连）请求固定端点：
+
+```http
+POST https://chatgpt.com/backend-api/codex/responses
+Authorization: Bearer <临时 access token>
+ChatGPT-Account-Id: <目标账号 ID>
+Accept: text/event-stream
+
+{"model":"<配置文本模型>","input":["<固定糖果题>"],"instructions":"只能返回一个阿拉伯数字...","store":false,"stream":true}
+```
+
+只有 HTTP 2xx 且 SSE 出现 `response.completed` 或等价 `response.done` 才表示明确成功；单独的 HTTP 200、`[DONE]` 或 EOF 均不算成功。程序从完成事件、done 正文或 delta 中按优先级提取回复：去除首尾空白后严格等于 `21` 标记“智商正常”，其他非空内容标记“智商不正常”，空正文标记“无有效回答”。三种情况都是一次明确成功的激活请求，不会因答案重试。面板保存最多 2000 个 Unicode 字符，不保存完整 SSE。
+
+官方响应头按 `window-minutes=300` 和 `10080` 识别 5h/7d 窗口，不依赖 primary/secondary 顺序。若响应头已确认 5h，立即进入“已验证”；否则在 10、30、60 秒通过 sub2api quota 补充核验。60 秒仍无证据时进入终态“请求成功·额度未确认”，按请求时间推算 5h 后的下一轮预检，不会无限停留或在同一周期重发。重启会恢复未完成核验而不会重新发送。
 
 ### 关于“调用一次”
 
-sub2api test 接口没有幂等键，因此网络层无法保证严格 exactly-once。本项目保证每个持久化周期只接受一个成功结果，并在失败后先查 quota 再决定是否重试；但在 test 超时且 quota 同时不可用时，成功优先策略可能重复发送糖果题。默认初次尝试后最多重试 3 次，间隔 30、60、120 秒，所有尝试都会审计。
+ChatGPT Codex Responses 接口没有本项目可用的幂等键，因此网络层无法保证严格 exactly-once。本项目保证每个持久化周期只接受一个成功结果，并在不确定失败后先查 quota 再决定是否重试；但在请求超时且 quota 同时不可用时，成功优先策略可能重复发送糖果题。默认初次尝试后最多重试 3 次，间隔 30、60、120 秒，所有尝试都会审计。
 
 明确的认证、权限、合规确认、账号不存在或 schema 错误永不 fail-open。只有此前验证过 quota schema 的网络失败、429 或 5xx，才允许在 reset 后等待两分钟仍无法读取 quota 时发送一次成功优先请求。
 
@@ -160,6 +176,7 @@ sub2api test 接口没有幂等键，因此网络层无法保证严格 exactly-o
 - 管理员密码使用 Argon2id；会话令牌只保存 SHA-256 哈希
 - 会话空闲 12 小时、绝对 7 天；写操作要求 SameSite 会话、Origin 与 CSRF 同时通过
 - 数据库不保存 sub2api 账号凭据、原始 SSE 或完整敏感响应
+- 单账号导出的 access token 和代理密码仅在本次请求内存中使用，不写数据库、事件或日志
 
 ## 运维
 
@@ -219,10 +236,11 @@ journald 是系统共享日志，卸载器不会清空整个 journal；该服务
 
 1. 完成设置，只点击“同步账号”和“刷新额度”进行只读检查
 2. 核对 Plus 与 Team/Business 账号的 5h/7d 窗口和套餐识别
-3. 分别选择一个账号启用，并确认首次真实糖果题激活请求及返回内容
-4. 观察一个完整 reset 周期后再批量启用
+3. 在设置页阅读说明并显式启用“官方 Codex 直连唤醒”
+4. 分别选择一个 Plus 和一个 Team/Business 账号启用，确认首次真实糖果题、返回内容、模型、传输路径与额度证据
+5. 观察一个完整 reset 周期后再批量启用
 
-sub2api 的 test 成功路径还会清理该账号可恢复的限流运行态。请确认自动请求符合你的账号、组织和上游服务条款；本项目不会重置额度、消耗 reset credits、导出凭据或绕过服务限制。
+升级到 v0.1.6 后，直连总开关保持关闭，v0.1.5 的智商结果会显示“旧版结果无效”，迁移不会发送请求。请确认自动请求符合你的账号、组织和上游服务条款；本项目不会重置额度、消耗 reset credits 或绕过服务限制。
 
 ## 开发与构建
 

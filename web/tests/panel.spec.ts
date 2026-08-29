@@ -1,6 +1,19 @@
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 
+interface FixtureStatus {
+  export_count: number
+  refresh_count: number
+  codex_request_count: number
+}
+
+async function fixtureStatus(request: import('@playwright/test').APIRequestContext): Promise<FixtureStatus> {
+  const response = await request.get('http://127.0.0.1:18081/test-status')
+  expect(response.ok()).toBeTruthy()
+  const payload = await response.json() as { data: FixtureStatus }
+  return payload.data
+}
+
 async function setupToken(): Promise<string> {
   for (let attempt = 0; attempt < 50; attempt++) {
     const log = await readFile('../.e2e-data/app.log', 'utf8').catch(() => '')
@@ -33,18 +46,33 @@ async function initialize(page: import('@playwright/test').Page) {
   await expect(page.getByRole('heading', { name: '账号' })).toBeVisible()
 }
 
-test('initializes, logs in, syncs and enables an account', async ({ page }) => {
+test('initializes, logs in, syncs and enables an account', async ({ page, request }, testInfo) => {
   page.on('console', (message) => console.log(`browser:${message.type()}: ${message.text()}`))
   page.on('pageerror', (error) => console.log(`browser:error: ${error.message}`))
   await initialize(page)
   await page.getByTitle('同步账号').click()
   await expect(page.getByText('plus@example.com').first()).toBeVisible()
+  if (testInfo.project.name === 'desktop') {
+    await expect.poll(() => fixtureStatus(request)).toMatchObject({ export_count: 0, refresh_count: 0, codex_request_count: 0 })
+  }
+  await page.getByRole('link', { name: '设置' }).click()
+  await expect(page.getByText('已配置密钥')).toBeVisible()
+  const directToggle = page.getByLabel('启用官方 Codex 直连唤醒')
+  if (!await directToggle.isChecked()) {
+    await directToggle.check()
+    await page.getByText('我确认该功能会让本程序使用账号 OAuth').click()
+    await page.getByRole('button', { name: '保存设置' }).click()
+    await expect(page.getByText('设置已保存')).toBeVisible()
+  }
+  await page.getByRole('link', { name: '账号' }).click()
   await page.getByRole('button', { name: /plus@example.com/ }).click()
   const drawer = page.locator('.drawer')
   await expect(drawer).toBeVisible()
   const toggle = drawer.getByLabel('自动激活')
-  await toggle.check()
-  await page.getByRole('button', { name: '保存' }).click()
+  if (!await toggle.isChecked()) {
+    await toggle.check()
+    await page.getByRole('button', { name: '保存' }).click()
+  }
 
   await expect.poll(() => page.evaluate(async () => {
     const response = await fetch('/api/accounts')
@@ -55,6 +83,13 @@ test('initializes, logs in, syncs and enables an account', async ({ page }) => {
   await expect(page.getByText('智商正常').first()).toBeVisible()
   await page.getByRole('button', { name: /plus@example.com/ }).click()
   await expect(page.locator('.drawer .answer-text').first()).toHaveText('21')
+  await expect(page.locator('.drawer')).toContainText('official_codex_sse')
+  await expect(page.locator('.drawer')).toContainText('official_headers')
+
+  await expect.poll(() => fixtureStatus(request)).toMatchObject({ export_count: 1, refresh_count: 0, codex_request_count: 1 })
+  await page.reload()
+  await expect(page.getByText('智商正常').first()).toBeVisible()
+  await expect.poll(() => fixtureStatus(request)).toMatchObject({ export_count: 1, refresh_count: 0, codex_request_count: 1 })
 
   const body = await page.locator('body').boundingBox()
   expect(body?.width).toBeLessThanOrEqual(page.viewportSize()!.width)

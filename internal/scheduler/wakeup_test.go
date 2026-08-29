@@ -7,17 +7,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MengStar-L/sub2api-auto5h/internal/codex"
 	"github.com/MengStar-L/sub2api-auto5h/internal/sub2api"
 )
 
 type scriptedRemote struct {
-	mu         sync.Mutex
-	quota      sub2api.Quota
-	quotas     []sub2api.Quota
-	quotaErr   error
-	testResult sub2api.TestResult
-	testErr    error
-	testCalls  int
+	mu              sync.Mutex
+	quota           sub2api.Quota
+	quotas          []sub2api.Quota
+	quotaErr        error
+	testResult      codex.Result
+	testErr         error
+	testCalls       int
+	credentialCalls int
 }
 
 type fixedClock struct {
@@ -28,6 +30,27 @@ func (clock fixedClock) Now() time.Time { return clock.now }
 
 func (fixedClock) After(time.Duration) <-chan time.Time {
 	return make(chan time.Time)
+}
+
+type advancingClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (clock *advancingClock) Now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.now
+}
+
+func (clock *advancingClock) After(delay time.Duration) <-chan time.Time {
+	clock.mu.Lock()
+	clock.now = clock.now.Add(delay)
+	now := clock.now
+	clock.mu.Unlock()
+	ready := make(chan time.Time, 1)
+	ready <- now
+	return ready
 }
 
 func (*scriptedRemote) Accounts(context.Context) ([]sub2api.Account, error) {
@@ -49,7 +72,16 @@ func (r *scriptedRemote) Quota(context.Context, int64) (sub2api.Quota, error) {
 	return r.quota, r.quotaErr
 }
 
-func (r *scriptedRemote) TestAccount(context.Context, int64, string) (sub2api.TestResult, error) {
+func (r *scriptedRemote) ActivationMaterial(context.Context, int64, string, string) (sub2api.ActivationMaterial, error) {
+	r.mu.Lock()
+	r.credentialCalls++
+	r.mu.Unlock()
+	return sub2api.ActivationMaterial{AccessToken: "token", ChatGPTID: "workspace"}, nil
+}
+
+func (*scriptedRemote) RefreshAccessToken(context.Context, int64) error { return nil }
+
+func (r *scriptedRemote) Activate(context.Context, codex.Request) (codex.Result, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.testCalls++
@@ -60,6 +92,12 @@ func (r *scriptedRemote) testCallCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.testCalls
+}
+
+func (r *scriptedRemote) credentialCallCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.credentialCalls
 }
 
 func testQuota(now time.Time, used float64) sub2api.Quota {
@@ -88,7 +126,7 @@ func TestProcessAccountDispatchesWhenFiveHourUsageIsZero(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	remote := &scriptedRemote{
 		quota:      testQuota(now, 0),
-		testResult: sub2api.TestResult{HTTPStatus: 200, Success: true},
+		testResult: codex.Result{HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct"},
 	}
 	automation := schedulerWithRemote(data, remote)
 	t.Cleanup(automation.Stop)
@@ -98,6 +136,54 @@ func TestProcessAccountDispatchesWhenFiveHourUsageIsZero(t *testing.T) {
 	}
 	if calls := remote.testCallCount(); calls != 1 {
 		t.Fatalf("test calls=%d", calls)
+	}
+}
+
+func TestDirectWakeupDisabledNeverExportsCredentialsOrDispatches(t *testing.T) {
+	data, account := schedulerTestStore(t)
+	settings, err := data.GetSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.DirectWakeupEnabled = false
+	if err := data.UpdateSettings(context.Background(), settings, false, false); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	remote := &scriptedRemote{quota: testQuota(now, 0)}
+	automation := schedulerWithRemote(data, remote)
+	t.Cleanup(automation.Stop)
+
+	if err := automation.ProcessAccount(context.Background(), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if remote.credentialCallCount() != 0 || remote.testCallCount() != 0 {
+		t.Fatalf("credential calls=%d activation calls=%d", remote.credentialCallCount(), remote.testCallCount())
+	}
+	updated, err := data.GetAccount(context.Background(), account.ID)
+	if err != nil || updated.RuntimeState != "direct_disabled" || updated.NextActionAt != nil {
+		t.Fatalf("account=%#v err=%v", updated, err)
+	}
+}
+
+func TestOfficialFiveHourHeaderVerifiesImmediately(t *testing.T) {
+	data, account := schedulerTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	remote := &scriptedRemote{
+		quota: testQuota(now, 0),
+		testResult: codex.Result{
+			HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct", Reply: "29",
+			RateLimits: codex.RateLimits{FiveHour: &codex.RateWindow{UsedPercent: 1, ResetAfterSeconds: 17_900, ResetAt: now.Add(17_900 * time.Second).Unix()}},
+		},
+	}
+	automation := schedulerWithRemote(data, remote)
+	t.Cleanup(automation.Stop)
+	if err := automation.ProcessAccount(context.Background(), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := data.GetAccount(context.Background(), account.ID)
+	if err != nil || updated.RuntimeState != "verified" || updated.LastAnswerStatus != "abnormal" || updated.LastAnswerText != "29" || updated.LastQuotaEvidence != "official_headers" {
+		t.Fatalf("account=%#v err=%v", updated, err)
 	}
 }
 
@@ -181,7 +267,7 @@ func TestSuccessfulPuzzleRepliesDoNotChangeActivationSuccess(t *testing.T) {
 	}{
 		{name: "normal", reply: " 21\n", assessment: "normal"},
 		{name: "wrong number", reply: "29", assessment: "abnormal"},
-		{name: "empty reply", reply: "", assessment: "abnormal"},
+		{name: "empty reply", reply: "", assessment: "no_answer"},
 		{name: "explanation", reply: "答案是21", assessment: "abnormal"},
 	}
 	for _, test := range tests {
@@ -190,7 +276,7 @@ func TestSuccessfulPuzzleRepliesDoNotChangeActivationSuccess(t *testing.T) {
 			now := time.Now().UTC().Truncate(time.Second)
 			remote := &scriptedRemote{
 				quota:      testQuota(now, 0),
-				testResult: sub2api.TestResult{HTTPStatus: 200, Success: true, Reply: test.reply},
+				testResult: codex.Result{HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct", Reply: test.reply},
 			}
 			automation := schedulerWithRemote(data, remote)
 			t.Cleanup(automation.Stop)
@@ -205,7 +291,7 @@ func TestSuccessfulPuzzleRepliesDoNotChangeActivationSuccess(t *testing.T) {
 			if err != nil || len(cycles) != 1 {
 				t.Fatalf("cycles=%#v err=%v", cycles, err)
 			}
-			if cycles[0].Status != "success_unverified" || cycles[0].AttemptCount != 1 {
+			if cycles[0].Status != "verifying" || cycles[0].AttemptCount != 1 {
 				t.Fatalf("cycle=%#v", cycles[0])
 			}
 			attempts, err := data.ListAttempts(context.Background(), cycles[0].ID)
@@ -219,19 +305,19 @@ func TestSuccessfulPuzzleRepliesDoNotChangeActivationSuccess(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if updated.RuntimeState != "success_unverified" || updated.LastAnswerStatus != test.assessment || updated.LastAnswerText != test.reply || updated.LastError != "" {
+			if updated.RuntimeState != "verifying" || updated.LastAnswerStatus != test.assessment || updated.LastAnswerText != test.reply || updated.LastError != "" {
 				t.Fatalf("account=%#v", updated)
 			}
 		})
 	}
 }
 
-func TestSuccessUnverifiedCreatesFallbackCycleAtNextDueTime(t *testing.T) {
+func TestAcceptedUnverifiedCreatesFallbackCycleAtNextDueTime(t *testing.T) {
 	data, account := schedulerTestStore(t)
 	firstNow := time.Now().UTC().Truncate(time.Second)
 	firstRemote := &scriptedRemote{
 		quota:      testQuota(firstNow, 0),
-		testResult: sub2api.TestResult{HTTPStatus: 200, Success: true, Reply: "21"},
+		testResult: codex.Result{HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct", Reply: "21"},
 	}
 	first := schedulerWithRemote(data, firstRemote)
 	if err := first.ProcessAccount(context.Background(), account.ID); err != nil {
@@ -239,14 +325,26 @@ func TestSuccessUnverifiedCreatesFallbackCycleAtNextDueTime(t *testing.T) {
 	}
 	first.Stop()
 
+	initialCycles, err := data.ListCycles(context.Background(), account.ID, 10)
+	if err != nil || len(initialCycles) != 1 {
+		t.Fatalf("cycles=%#v err=%v", initialCycles, err)
+	}
 	accepted, err := data.GetAccount(context.Background(), account.ID)
-	if err != nil || accepted.NextActionAt == nil || accepted.RuntimeState != "success_unverified" {
+	if err != nil || accepted.NextActionAt == nil || accepted.RuntimeState != "verifying" {
+		t.Fatalf("accepted=%#v err=%v", accepted, err)
+	}
+	finalized, err := data.FinalizeVerification(context.Background(), initialCycles[0].ID, firstNow.Add(60*time.Second).Unix(), *accepted.NextActionAt, "请求成功，60 秒内未获得 5h 额度证据")
+	if err != nil || !finalized {
+		t.Fatalf("finalized=%v err=%v", finalized, err)
+	}
+	accepted, err = data.GetAccount(context.Background(), account.ID)
+	if err != nil || accepted.RuntimeState != "accepted_unverified" {
 		t.Fatalf("accepted=%#v err=%v", accepted, err)
 	}
 	secondNow := time.Unix(*accepted.NextActionAt, 0)
 	secondRemote := &scriptedRemote{
 		quota:      testQuota(secondNow, 0),
-		testResult: sub2api.TestResult{HTTPStatus: 200, Success: true, Reply: "29"},
+		testResult: codex.Result{HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct", Reply: "29"},
 	}
 	second := schedulerWithRemote(data, secondRemote)
 	second.clock = fixedClock{now: secondNow}
@@ -261,11 +359,55 @@ func TestSuccessUnverifiedCreatesFallbackCycleAtNextDueTime(t *testing.T) {
 	}
 	foundFallback := false
 	for _, cycle := range cycles {
-		if cycle.Kind == "fallback" && cycle.Status == "success_unverified" {
+		if cycle.Kind == "fallback" && cycle.Status == "verifying" {
 			foundFallback = true
 		}
 	}
 	if !foundFallback || secondRemote.testCallCount() != 1 {
 		t.Fatalf("fallback=%v calls=%d cycles=%#v", foundFallback, secondRemote.testCallCount(), cycles)
+	}
+}
+
+func TestRestartResumesVerificationWithoutResendingAcceptedRequest(t *testing.T) {
+	data, account := schedulerTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	firstRemote := &scriptedRemote{
+		quota:      testQuota(now, 0),
+		testResult: codex.Result{HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct", Reply: "21"},
+	}
+	first := schedulerWithRemote(data, firstRemote)
+	if err := first.ProcessAccount(context.Background(), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	first.Stop()
+	if firstRemote.testCallCount() != 1 {
+		t.Fatalf("initial activation calls=%d", firstRemote.testCallCount())
+	}
+
+	recoveryRemote := &scriptedRemote{quota: testQuota(now, 0)}
+	restarted := schedulerWithRemote(data, recoveryRemote)
+	restarted.clock = &advancingClock{now: now}
+	restarted.resumeVerifications()
+	t.Cleanup(restarted.Stop)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		recovered, err := data.GetAccount(context.Background(), account.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if recovered.RuntimeState == "accepted_unverified" {
+			if recovered.VerificationDeadlineAt != nil || recovered.NextActionAt == nil {
+				t.Fatalf("recovered account=%#v", recovered)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("verification did not converge: %#v", recovered)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if recoveryRemote.credentialCallCount() != 0 || recoveryRemote.testCallCount() != 0 {
+		t.Fatalf("recovery exported=%d activated=%d", recoveryRemote.credentialCallCount(), recoveryRemote.testCallCount())
 	}
 }

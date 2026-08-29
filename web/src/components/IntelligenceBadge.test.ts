@@ -18,4 +18,9 @@ describe('IntelligenceBadge', () => {
     const wrapper = mount(IntelligenceBadge, { props: { status: '' } })
     expect(wrapper.text()).toContain('未测试')
   })
+
+  it('distinguishes empty and invalid legacy results', () => {
+    expect(mount(IntelligenceBadge, { props: { status: 'no_answer' } }).text()).toContain('无有效回答')
+    expect(mount(IntelligenceBadge, { props: { status: 'legacy_invalid' } }).text()).toContain('旧版结果无效')
+  })
 })

@@ -65,6 +65,12 @@ async function batch(enabled: boolean) {
 
 function percent(value?: number) { return value == null ? '未知' : `${Math.round(value)}%` }
 function when(value?: number) { return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value * 1000)) : '—' }
+function answerSummary(account: Account) {
+  if (account.last_answer_status === 'abnormal') return `返回 ${account.last_answer_text || '空'}`
+  if (account.last_answer_status === 'no_answer') return '成功完成但正文为空'
+  if (account.last_answer_status === 'legacy_invalid') return 'v0.1.5 未实际发送题目'
+  return ''
+}
 function choose(account: Account) { detail.value = account }
 async function updated() { const id = detail.value?.id; await load(); detail.value = accounts.value.find((item) => item.id === id) ?? null }
 
@@ -106,7 +112,7 @@ onMounted(load)
           <td><span class="plan-label">{{ account.plan_type || '未知' }}</span><small v-if="!account.eligible">{{ account.eligibility_reason }}</small></td>
           <td><div class="usage-cell"><span>{{ percent(account.five_used_percent) }}</span><progress :value="account.five_used_percent ?? 0" max="100" /></div></td>
           <td>{{ when(account.five_reset_at) }}</td><td>{{ when(account.next_action_at) }}</td>
-          <td><IntelligenceBadge :status="account.last_answer_status" /></td>
+          <td><div class="assessment-cell"><IntelligenceBadge :status="account.last_answer_status" /><small v-if="answerSummary(account)">{{ answerSummary(account) }}</small></div></td>
           <td><StatusBadge :state="account.runtime_state" /></td>
         </tr>
       </tbody>

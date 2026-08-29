@@ -35,6 +35,12 @@ export interface Account {
   last_answer_status: string
   last_answer_text: string
   last_answer_at?: number
+  last_request_model: string
+  last_transport_path: string
+  last_answer_source: string
+  last_quota_evidence: string
+  last_terminal_summary: string
+  verification_deadline_at?: number
   policy: Policy
 }
 
@@ -62,6 +68,11 @@ export interface Attempt {
   message: string
   answer_status: string
   answer_text: string
+  request_model: string
+  transport_path: string
+  answer_source: string
+  quota_evidence: string
+  terminal_summary: string
 }
 
 export interface EventItem {
@@ -87,5 +98,6 @@ export interface Settings {
   retry_base_seconds: number
   request_timeout_seconds: number
   max_concurrency: number
+  direct_wakeup_enabled: boolean
   updated_at?: string
 }

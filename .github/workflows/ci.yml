@@ -71,7 +71,7 @@ jobs:
       - name: Build production binary for browser tests
         env:
           CGO_ENABLED: '0'
-        run: go build -trimpath -ldflags "-s -w -X main.version=e2e -X main.commit=${GITHUB_SHA}" -o build/e2e/sub2api-auto5h ./cmd/sub2api-auto5h
+        run: go build -tags=e2e -trimpath -ldflags "-s -w -X main.version=e2e -X main.commit=${GITHUB_SHA}" -o build/e2e/sub2api-auto5h ./cmd/sub2api-auto5h
 
       - name: Install Playwright Chromium
         run: npm exec --workspace web playwright install --with-deps chromium
