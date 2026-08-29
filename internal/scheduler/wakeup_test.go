@@ -32,6 +32,27 @@ func (fixedClock) After(time.Duration) <-chan time.Time {
 	return make(chan time.Time)
 }
 
+type advancingClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (clock *advancingClock) Now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.now
+}
+
+func (clock *advancingClock) After(delay time.Duration) <-chan time.Time {
+	clock.mu.Lock()
+	clock.now = clock.now.Add(delay)
+	now := clock.now
+	clock.mu.Unlock()
+	ready := make(chan time.Time, 1)
+	ready <- now
+	return ready
+}
+
 func (*scriptedRemote) Accounts(context.Context) ([]sub2api.Account, error) {
 	return []sub2api.Account{}, nil
 }
@@ -344,5 +365,49 @@ func TestAcceptedUnverifiedCreatesFallbackCycleAtNextDueTime(t *testing.T) {
 	}
 	if !foundFallback || secondRemote.testCallCount() != 1 {
 		t.Fatalf("fallback=%v calls=%d cycles=%#v", foundFallback, secondRemote.testCallCount(), cycles)
+	}
+}
+
+func TestRestartResumesVerificationWithoutResendingAcceptedRequest(t *testing.T) {
+	data, account := schedulerTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	firstRemote := &scriptedRemote{
+		quota:      testQuota(now, 0),
+		testResult: codex.Result{HTTPStatus: 200, Terminal: "response.completed", TransportPath: "direct", Reply: "21"},
+	}
+	first := schedulerWithRemote(data, firstRemote)
+	if err := first.ProcessAccount(context.Background(), account.ID); err != nil {
+		t.Fatal(err)
+	}
+	first.Stop()
+	if firstRemote.testCallCount() != 1 {
+		t.Fatalf("initial activation calls=%d", firstRemote.testCallCount())
+	}
+
+	recoveryRemote := &scriptedRemote{quota: testQuota(now, 0)}
+	restarted := schedulerWithRemote(data, recoveryRemote)
+	restarted.clock = &advancingClock{now: now}
+	restarted.resumeVerifications()
+	t.Cleanup(restarted.Stop)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		recovered, err := data.GetAccount(context.Background(), account.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if recovered.RuntimeState == "accepted_unverified" {
+			if recovered.VerificationDeadlineAt != nil || recovered.NextActionAt == nil {
+				t.Fatalf("recovered account=%#v", recovered)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("verification did not converge: %#v", recovered)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if recoveryRemote.credentialCallCount() != 0 || recoveryRemote.testCallCount() != 0 {
+		t.Fatalf("recovery exported=%d activated=%d", recoveryRemote.credentialCallCount(), recoveryRemote.testCallCount())
 	}
 }
